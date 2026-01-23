@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "baseUrl": "./src",
+    "paths": {
+      "@main/*": ["main/*"],
+      "@renderer/*": ["renderer/*"],
+      "@preload/*": ["preload/*"]
+    },
+    "types": ["electron-vite/node"]
+  },
+  "include": ["src"]
+}
