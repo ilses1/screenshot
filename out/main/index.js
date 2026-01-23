@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, nativeImage, Tray, Menu, ipcMain, desktopCapturer } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, ipcMain, desktopCapturer, Menu } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -22,6 +22,9 @@ let history = [];
 let lastCaptureDataUrl = null;
 const isDev = !app.isPackaged;
 let config;
+function isCaptureActive() {
+  return !!captureWindow;
+}
 function getConfigPath() {
   const userData = app.getPath("userData");
   return path.join(userData, "config.json");
@@ -133,10 +136,17 @@ function createCaptureWindow() {
     if (isDev) {
       captureWindow?.webContents.openDevTools({ mode: "detach" });
     }
+    if (tray) {
+      updateTrayMenu();
+    }
+    captureWindow?.focus();
   });
   captureWindow.on("closed", () => {
     console.log("[main] captureWindow closed");
     captureWindow = null;
+    if (tray) {
+      updateTrayMenu();
+    }
   });
 }
 function createEditorWindow() {
@@ -169,41 +179,32 @@ function createTray() {
   const icon = nativeImage.createFromPath(iconPath);
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon;
   tray = new Tray(trayIcon);
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: "截图",
-      click: () => {
-        console.log("[main] tray menu click: screenshot");
-        createCaptureWindow();
-      }
-    },
-    {
-      label: "设置",
-      click: () => {
-        console.log("[main] tray menu click: settings");
-        createMainWindow();
-        mainWindow?.show();
-        mainWindow?.focus();
-      }
-    },
-    {
-      label: "退出",
-      click: () => {
-        console.log("[main] tray menu click: quit");
-        app.quit();
-      }
-    }
-  ]);
   tray.setToolTip("Electron 截图");
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
 }
 function registerShortcuts() {
   globalShortcut.unregisterAll();
   if (!config?.hotkey) return;
-  const ok = globalShortcut.register(config.hotkey, () => {
+  const handler = () => {
     console.log("[main] global shortcut triggered", config.hotkey);
-    createCaptureWindow();
-  });
+    if (isCaptureActive()) {
+      captureWindow?.close();
+    } else {
+      createCaptureWindow();
+    }
+  };
+  let ok = globalShortcut.register(config.hotkey, handler);
+  if (!ok) {
+    const fallbacks = ["Alt+Shift+A", "CommandOrControl+Shift+A"];
+    for (const key of fallbacks) {
+      if (globalShortcut.register(key, handler)) {
+        config.hotkey = key;
+        saveConfig();
+        ok = true;
+        break;
+      }
+    }
+  }
   console.log("[main] registerShortcuts", config.hotkey, ok ? "success" : "failed");
 }
 function registerIpcHandlers() {
@@ -309,3 +310,38 @@ app.whenReady().then(() => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
 });
+function updateTrayMenu() {
+  if (!tray) return;
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: isCaptureActive() ? "结束截图" : "截图",
+      click: () => {
+        if (isCaptureActive()) {
+          console.log("[main] tray menu click: stop capture");
+          captureWindow?.close();
+        } else {
+          console.log("[main] tray menu click: screenshot");
+          createCaptureWindow();
+        }
+      }
+    },
+    {
+      label: "设置",
+      click: () => {
+        console.log("[main] tray menu click: settings");
+        createMainWindow();
+        mainWindow?.show();
+        mainWindow?.focus();
+      }
+    },
+    {
+      label: "退出",
+      click: () => {
+        console.log("[main] tray menu click: quit");
+        app.quit();
+      }
+    }
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip(isCaptureActive() ? "Electron 截图（正在截图）" : "Electron 截图");
+}

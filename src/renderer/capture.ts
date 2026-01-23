@@ -9,6 +9,20 @@ let startX = 0
 let startY = 0
 let currentX = 0
 let currentY = 0
+document.addEventListener('contextmenu', e => {
+  e.preventDefault()
+  window.close()
+})
+document.addEventListener(
+  'mousedown',
+  e => {
+    if ((e as MouseEvent).button === 2) {
+      e.preventDefault()
+      window.close()
+    }
+  },
+  { capture: true }
+)
 
 function getSelectionRect() {
   const x = Math.min(startX, currentX)
@@ -138,6 +152,10 @@ window.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     window.close()
   }
+})
+
+window.addEventListener('load', () => {
+  window.focus()
 })
 
 captureScreen().catch(error => {
