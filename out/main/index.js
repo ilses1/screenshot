@@ -6,6 +6,14 @@ import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
+const IPC_CHANNELS = {
+  SETTINGS_GET: "settings:get",
+  SETTINGS_UPDATE: "settings:update",
+  CAPTURE_SAVE_IMAGE: "capture:save-image",
+  HISTORY_LIST: "history:list",
+  HISTORY_CLEAR: "history:clear",
+  PIN_LAST: "pin:last"
+};
 let tray = null;
 let mainWindow = null;
 let captureWindow = null;
@@ -199,16 +207,16 @@ function registerShortcuts() {
   console.log("[main] registerShortcuts", config.hotkey, ok ? "success" : "failed");
 }
 function registerIpcHandlers() {
-  ipcMain.handle("settings:get", () => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, () => {
     return config;
   });
-  ipcMain.handle("settings:update", (_event, patch) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch) => {
     config = { ...config, ...patch };
     saveConfig();
     registerShortcuts();
     return config;
   });
-  ipcMain.handle("capture:save-image", async (_event, dataUrl) => {
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl) => {
     lastCaptureDataUrl = dataUrl;
     if (!config.autoSaveToFile) return null;
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
@@ -234,14 +242,14 @@ function registerIpcHandlers() {
     }
     return filePath;
   });
-  ipcMain.handle("history:list", () => {
+  ipcMain.handle(IPC_CHANNELS.HISTORY_LIST, () => {
     return history;
   });
-  ipcMain.handle("history:clear", () => {
+  ipcMain.handle(IPC_CHANNELS.HISTORY_CLEAR, () => {
     history = [];
     saveHistory();
   });
-  ipcMain.handle("pin:last", () => {
+  ipcMain.handle(IPC_CHANNELS.PIN_LAST, () => {
     if (!lastCaptureDataUrl) return;
     const pinWindow = new BrowserWindow({
       frame: false,

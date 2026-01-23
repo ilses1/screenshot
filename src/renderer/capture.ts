@@ -110,6 +110,11 @@ function finishSelection() {
 }
 
 canvas.addEventListener('mousedown', event => {
+  if (event.button === 2) {
+    window.close()
+    return
+  }
+
   isSelecting = true
   startX = event.offsetX
   startY = event.offsetY

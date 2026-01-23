@@ -1,15 +1,4 @@
-type AppConfig = {
-  hotkey: string
-  autoSaveToFile: boolean
-  saveDir: string
-  openEditorAfterCapture: boolean
-}
-
-type ScreenshotRecord = {
-  id: string
-  filePath: string
-  createdAt: number
-}
+ import type { AppConfig, ScreenshotRecord } from '../common/types'
 
 declare global {
   interface Window {
@@ -24,9 +13,10 @@ declare global {
   }
 }
 
-const app = document.getElementById('app')!
-
-app.innerHTML = `
+ const app = document.getElementById('app')!
+ 
+ function renderSettingsUI() {
+   app.innerHTML = `
   <main style="font-family: system-ui, sans-serif; padding: 24px; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
     <h1 style="font-size: 24px; margin-bottom: 16px;">截图工具设置</h1>
     <section style="margin-bottom: 16px;">
@@ -61,31 +51,63 @@ app.innerHTML = `
       </div>
       <ul id="history-list" style="list-style: none; padding: 0; margin: 0;"></ul>
     </section>
-  </main>
-`
+   </main>
+ `
+ }
 
-const hotkeyInput = document.getElementById('hotkey-input') as HTMLInputElement
-const autoSaveInput = document.getElementById(
+ function getElements() {
+   const hotkeyInput = document.getElementById('hotkey-input') as HTMLInputElement
+   const autoSaveInput = document.getElementById(
   'auto-save-input'
 ) as HTMLInputElement
-const saveDirInput = document.getElementById(
+   const saveDirInput = document.getElementById(
   'save-dir-input'
 ) as HTMLInputElement
-const openEditorInput = document.getElementById(
+   const openEditorInput = document.getElementById(
   'open-editor-input'
 ) as HTMLInputElement
-const saveButton = document.getElementById('save-button') as HTMLButtonElement
-const statusText = document.getElementById('status-text') as HTMLSpanElement
-const historyList = document.getElementById('history-list') as HTMLUListElement
-const refreshHistoryButton = document.getElementById(
+   const saveButton = document.getElementById('save-button') as HTMLButtonElement
+   const statusText = document.getElementById('status-text') as HTMLSpanElement
+   const historyList = document.getElementById('history-list') as HTMLUListElement
+   const refreshHistoryButton = document.getElementById(
   'refresh-history-button'
 ) as HTMLButtonElement
-const clearHistoryButton = document.getElementById(
+   const clearHistoryButton = document.getElementById(
   'clear-history-button'
 ) as HTMLButtonElement
-const pinLastButton = document.getElementById(
+   const pinLastButton = document.getElementById(
   'pin-last-button'
 ) as HTMLButtonElement
+ 
+   return {
+     hotkeyInput,
+     autoSaveInput,
+     saveDirInput,
+     openEditorInput,
+     saveButton,
+     statusText,
+     historyList,
+     refreshHistoryButton,
+     clearHistoryButton,
+     pinLastButton
+   }
+ }
+ 
+ const {
+   hotkeyInput,
+   autoSaveInput,
+   saveDirInput,
+   openEditorInput,
+   saveButton,
+   statusText,
+   historyList,
+   refreshHistoryButton,
+   clearHistoryButton,
+   pinLastButton
+ } = (() => {
+   renderSettingsUI()
+   return getElements()
+ })()
 
 async function loadSettings() {
   try {

@@ -2,29 +2,18 @@ import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, d
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import type { AppConfig, ScreenshotRecord } from '../common/types'
+import { IPC_CHANNELS } from '../common/ipcChannels'
 
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let editorWindow: BrowserWindow | null = null
 
-type ScreenshotRecord = {
-  id: string
-  filePath: string
-  createdAt: number
-}
-
 let history: ScreenshotRecord[] = []
 let lastCaptureDataUrl: string | null = null
 
 const isDev = !app.isPackaged
-
-type AppConfig = {
-  hotkey: string
-  autoSaveToFile: boolean
-  saveDir: string
-  openEditorAfterCapture: boolean
-}
 
 let config: AppConfig
 
@@ -246,18 +235,18 @@ function registerShortcuts() {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle('settings:get', () => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, () => {
     return config
   })
 
-  ipcMain.handle('settings:update', (_event, patch: Partial<AppConfig>) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch: Partial<AppConfig>) => {
     config = { ...config, ...patch }
     saveConfig()
     registerShortcuts()
     return config
   })
 
-  ipcMain.handle('capture:save-image', async (_event, dataUrl: string) => {
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl: string) => {
     lastCaptureDataUrl = dataUrl
 
     if (!config.autoSaveToFile) return null
@@ -291,16 +280,16 @@ function registerIpcHandlers() {
     return filePath
   })
 
-  ipcMain.handle('history:list', () => {
+  ipcMain.handle(IPC_CHANNELS.HISTORY_LIST, () => {
     return history
   })
 
-  ipcMain.handle('history:clear', () => {
+  ipcMain.handle(IPC_CHANNELS.HISTORY_CLEAR, () => {
     history = []
     saveHistory()
   })
 
-  ipcMain.handle('pin:last', () => {
+  ipcMain.handle(IPC_CHANNELS.PIN_LAST, () => {
     if (!lastCaptureDataUrl) return
 
     const pinWindow = new BrowserWindow({
