@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, nativeImage, Tray, Menu, ipcMain } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, Menu, ipcMain, desktopCapturer } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -86,11 +86,16 @@ function createMainWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+  mainWindow.webContents.once("did-finish-load", () => {
+    console.log("[main] settings window loaded");
+  });
 }
 function createCaptureWindow() {
   if (captureWindow) {
+    console.log("[main] captureWindow already exists");
     return;
   }
+  console.log("[main] creating captureWindow");
   captureWindow = new BrowserWindow({
     fullscreen: true,
     frame: false,
@@ -112,7 +117,17 @@ function createCaptureWindow() {
   } else {
     captureWindow.loadFile(path.join(__dirname, "../renderer/capture.html"));
   }
+  captureWindow.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
+    console.error("[main] captureWindow did-fail-load", errorCode, errorDescription);
+  });
+  captureWindow.webContents.once("did-finish-load", () => {
+    console.log("[main] captureWindow did-finish-load");
+    if (isDev) {
+      captureWindow?.webContents.openDevTools({ mode: "detach" });
+    }
+  });
   captureWindow.on("closed", () => {
+    console.log("[main] captureWindow closed");
     captureWindow = null;
   });
 }
@@ -150,34 +165,38 @@ function createTray() {
     {
       label: "截图",
       click: () => {
+        console.log("[main] tray menu click: screenshot");
         createCaptureWindow();
       }
     },
     {
       label: "设置",
       click: () => {
+        console.log("[main] tray menu click: settings");
         createMainWindow();
         mainWindow?.show();
         mainWindow?.focus();
       }
     },
-    { type: "separator" },
     {
       label: "退出",
       click: () => {
+        console.log("[main] tray menu click: quit");
         app.quit();
       }
     }
   ]);
-  tray.setToolTip("Electron Screenshot");
+  tray.setToolTip("Electron 截图");
   tray.setContextMenu(contextMenu);
 }
 function registerShortcuts() {
   globalShortcut.unregisterAll();
   if (!config?.hotkey) return;
-  globalShortcut.register(config.hotkey, () => {
+  const ok = globalShortcut.register(config.hotkey, () => {
+    console.log("[main] global shortcut triggered", config.hotkey);
     createCaptureWindow();
   });
+  console.log("[main] registerShortcuts", config.hotkey, ok ? "success" : "failed");
 }
 function registerIpcHandlers() {
   ipcMain.handle("settings:get", () => {
@@ -256,6 +275,14 @@ function registerIpcHandlers() {
       </html>
     `;
     pinWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+  });
+  ipcMain.handle("CAPTURE_GET_SOURCES", async (_event, opts) => {
+    const sources = await desktopCapturer.getSources(opts);
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL()
+    }));
   });
 }
 app.whenReady().then(() => {

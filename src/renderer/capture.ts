@@ -41,17 +41,36 @@ function draw() {
 }
 
 async function captureScreen() {
-  const { width, height } = screen.getPrimaryDisplay().size
+  const display = screen.getPrimaryDisplay()
+  const { width, height } = display.size
+  const { scaleFactor } = display
+
+  console.log('[capture] primary display', {
+    size: display.size,
+    bounds: display.bounds,
+    scaleFactor
+  })
+
   canvas.width = width
   canvas.height = height
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width, height }
+    thumbnailSize: { width: Math.round(width * scaleFactor), height: Math.round(height * scaleFactor) }
   })
+
+  if (!sources.length) {
+    console.error('[capture] no screen sources found')
+    throw new Error('no screen sources')
+  }
 
   const primarySource = sources[0]
   const image = primarySource.thumbnail
+
+  if (image.isEmpty()) {
+    console.error('[capture] primary source thumbnail is empty')
+    throw new Error('empty thumbnail')
+  }
 
   const buffer = image.toPNG()
   const url = `data:image/png;base64,${buffer.toString('base64')}`
@@ -59,6 +78,7 @@ async function captureScreen() {
   backgroundImage = new Image()
   backgroundImage.src = url
   backgroundImage.onload = () => {
+    console.log('[capture] background image loaded')
     draw()
   }
 }
