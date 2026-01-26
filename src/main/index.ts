@@ -9,6 +9,7 @@ let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let editorWindow: BrowserWindow | null = null
+let captureEscShortcutRegistered = false
 
 let history: ScreenshotRecord[] = []
 let lastCaptureDataUrl: string | null = null
@@ -18,6 +19,24 @@ const isDev = !app.isPackaged
 let config: AppConfig
 function isCaptureActive() {
   return !!captureWindow
+}
+
+function registerCaptureEscShortcut() {
+  if (captureEscShortcutRegistered) return
+  const ok = globalShortcut.register('Esc', () => {
+    if (isCaptureActive()) {
+      captureWindow?.close()
+    }
+  })
+  if (ok) {
+    captureEscShortcutRegistered = true
+  }
+}
+
+function unregisterCaptureEscShortcut() {
+  if (!captureEscShortcutRegistered) return
+  globalShortcut.unregister('Esc')
+  captureEscShortcutRegistered = false
 }
 
 function getConfigPath() {
@@ -190,6 +209,7 @@ function createCaptureWindow() {
 
       captureWindow?.show()
       captureWindow?.focus()
+      registerCaptureEscShortcut()
     } catch (error) {
       console.error('[main] captureWindow capture error', error)
       captureWindow?.close()
@@ -203,6 +223,7 @@ function createCaptureWindow() {
   captureWindow.on('closed', () => {
     console.log('[main] captureWindow closed')
     captureWindow = null
+    unregisterCaptureEscShortcut()
     if (tray) {
       updateTrayMenu()
     }

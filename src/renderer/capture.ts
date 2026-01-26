@@ -223,6 +223,7 @@ function getCanvasPoint(event: { clientX: number; clientY: number }) {
  * mouse 兜底：开始框选（用于 Pointer Events 不可用/不触发的环境）。
  */
 function onMouseDown(event: MouseEvent) {
+  debugger
   if (activeInput === 'pointer') return
   if (event.button === 2) {
     window.close()
@@ -265,6 +266,7 @@ function onMouseUp(_event: MouseEvent) {
  * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
  */
 function onPointerDown(event: PointerEvent) {
+  debugger
   if (event.button === 2) {
     window.close()
     return
