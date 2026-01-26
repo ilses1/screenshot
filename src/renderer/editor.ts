@@ -107,21 +107,22 @@ function endDrawing() {
   drawing = false
 }
 
-function onCanvasMouseDown(event: MouseEvent) {
+function getCanvasPoint(event: MouseEvent) {
   const rect = canvas.getBoundingClientRect()
   const x = event.clientX - rect.left
   const y = event.clientY - rect.top
+  return { x, y }
+}
+
+function onCanvasMouseDown(event: MouseEvent) {
+  const { x, y } = getCanvasPoint(event)
   startDrawing(x, y)
 }
 
 function onCanvasMouseMove(event: MouseEvent) {
-  const rect = canvas.getBoundingClientRect()
-  const x = event.clientX - rect.left
-  const y = event.clientY - rect.top
+  const { x, y } = getCanvasPoint(event)
 
-  if (drawing) {
-    continueDrawing(x, y)
-  }
+  if (drawing) continueDrawing(x, y)
 
   if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) {
     const data = ctx.getImageData(x, y, 1, 1).data

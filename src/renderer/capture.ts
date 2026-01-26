@@ -8,7 +8,7 @@ declare global {
   }
 }
 
-console.log('capture.ts loaded,00000000000000000')
+console.log('capture.ts 已加载')
 
 const canvas = document.getElementById('capture-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
