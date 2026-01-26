@@ -104,7 +104,7 @@ function createMainWindow() {
     height: 600,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
+      preload: path.join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -140,8 +140,9 @@ function createCaptureWindow() {
     show: false,
     backgroundColor: "#00000000",
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false
     }
   });
   captureWindow.setMenuBarVisibility(false);
@@ -157,6 +158,7 @@ function createCaptureWindow() {
     console.log("[main] captureWindow did-finish-load");
     if (isDev) {
       captureWindow?.webContents.openDevTools({ mode: "detach" });
+      captureWindow?.setAlwaysOnTop(false);
     }
     try {
       const thumbnailSize = {
@@ -212,8 +214,9 @@ function createEditorWindow() {
     height: 700,
     show: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false
     }
   });
   editorWindow.setMenuBarVisibility(false);

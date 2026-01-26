@@ -1,4 +1,11 @@
-import { clipboard, nativeImage, ipcRenderer } from 'electron'
+declare global {
+  interface Window {
+    editorApi: {
+      saveToClipboardAndPersist: (dataUrl: string) => Promise<unknown>
+      onImage: (handler: (dataUrl: string) => void) => void
+    }
+  }
+}
 
 type Tool = 'pen' | 'rect'
 
@@ -154,11 +161,7 @@ undoButton.addEventListener('click', () => {
 finishButton.addEventListener('click', () => {
   if (!backgroundImage) return
   const dataUrl = canvas.toDataURL('image/png')
-  const image = nativeImage.createFromDataURL(dataUrl)
-  clipboard.writeImage(image)
-  ipcRenderer.invoke('capture:save-image', dataUrl).catch(() => {
-    // ignore
-  })
+  window.editorApi.saveToClipboardAndPersist(dataUrl).catch(() => {})
   window.close()
 })
 
@@ -170,7 +173,7 @@ uploadButton.addEventListener('click', () => {
   console.log('图床上传功能预留：可在此处接入图床或自定义接口')
 })
 
-ipcRenderer.on('editor:image', (_event, dataUrl: string) => {
+window.editorApi.onImage((dataUrl: string) => {
   backgroundImage = new Image()
   backgroundImage.src = dataUrl
   backgroundImage.onload = () => {

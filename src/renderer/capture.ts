@@ -1,4 +1,14 @@
-import { clipboard, nativeImage, ipcRenderer } from 'electron'
+declare global {
+  interface Window {
+    captureApi: {
+      onSetBackground: (handler: (payload: any) => void) => void
+      saveImageToClipboard: (dataUrl: string) => void
+      saveImage: (dataUrl: string) => Promise<unknown>
+    }
+  }
+}
+
+console.log('capture.ts loaded,00000000000000000')
 
 const canvas = document.getElementById('capture-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
@@ -146,10 +156,8 @@ function finishSelection() {
   octx.drawImage(backgroundImage, sx, sy, sw, sh, 0, 0, sw, sh)
 
   const dataUrl = output.toDataURL('image/png')
-  const image = nativeImage.createFromDataURL(dataUrl)
-  clipboard.writeImage(image)
-
-  ipcRenderer.invoke('capture:save-image', dataUrl).catch(err => {
+  window.captureApi.saveImageToClipboard(dataUrl)
+  window.captureApi.saveImage(dataUrl).catch(err => {
     console.error('save image failed', err)
   })
 
@@ -223,7 +231,7 @@ function getCanvasPoint(event: { clientX: number; clientY: number }) {
  * mouse 兜底：开始框选（用于 Pointer Events 不可用/不触发的环境）。
  */
 function onMouseDown(event: MouseEvent) {
-  debugger
+  
   if (activeInput === 'pointer') return
   if (event.button === 2) {
     window.close()
@@ -266,7 +274,7 @@ function onMouseUp(_event: MouseEvent) {
  * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
  */
 function onPointerDown(event: PointerEvent) {
-  debugger
+  
   if (event.button === 2) {
     window.close()
     return
@@ -278,7 +286,7 @@ function onPointerDown(event: PointerEvent) {
   activePointerId = event.pointerId
   try {
     canvas.setPointerCapture(event.pointerId)
-  } catch {}
+  } catch { }
 
   isSelecting = true
   attachGlobalPointerListeners()
@@ -323,7 +331,7 @@ function onPointerUp(event: PointerEvent) {
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
       canvas.releasePointerCapture(event.pointerId)
-    } catch {}
+    } catch { }
   }
   endSelection()
 }
@@ -336,7 +344,7 @@ function onPointerCancel(event: PointerEvent) {
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
       canvas.releasePointerCapture(event.pointerId)
-    } catch {}
+    } catch { }
   }
   detachGlobalPointerListeners()
   activeInput = null
@@ -379,11 +387,10 @@ window.addEventListener('resize', onWindowResize)
 /**
  * 主进程开启截图后下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区。
  */
-function onCaptureSetBackground(_event: unknown, payload: unknown) {
-  // 主进程开启截图时会发送该事件：下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区
+function onCaptureSetBackground(payload: unknown) {
   if (!payload || typeof payload !== 'object') return
   const { dataUrl, displaySize, scaleFactor: displayScaleFactor } = payload as any
   if (typeof dataUrl !== 'string' || !displaySize) return
   setBackground(dataUrl, displaySize, displayScaleFactor)
 }
-ipcRenderer.on('capture:set-background', onCaptureSetBackground)
+window.captureApi.onSetBackground(onCaptureSetBackground)
