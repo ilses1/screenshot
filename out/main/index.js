@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, nativeImage, Tray, ipcMain, desktopCapturer, Menu, screen } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, ipcMain, clipboard, desktopCapturer, Menu, screen } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -275,6 +275,8 @@ function registerIpcHandlers() {
   });
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl) => {
     lastCaptureDataUrl = dataUrl;
+    const image = nativeImage.createFromDataURL(dataUrl);
+    clipboard.writeImage(image);
     if (!config.autoSaveToFile) return null;
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     const buffer = Buffer.from(base64, "base64");

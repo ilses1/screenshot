@@ -1,5 +1,6 @@
 "use strict";
 const electron = require("electron");
+console.log("预加载脚本已加载，clipboard 是否存在：", !!electron.clipboard);
 electron.contextBridge.exposeInMainWorld("api", {
   ping: () => "pong",
   getSettings: () => electron.ipcRenderer.invoke("settings:get"),
@@ -16,6 +17,10 @@ electron.contextBridge.exposeInMainWorld("captureApi", {
   },
   saveImageToClipboard: (dataUrl) => {
     const image = electron.nativeImage.createFromDataURL(dataUrl);
+    if (!electron.clipboard || typeof electron.clipboard.writeImage !== "function") {
+      console.error("剪贴板对象不可用，无法写入图片");
+      return;
+    }
     electron.clipboard.writeImage(image);
   },
   saveImage: (dataUrl) => electron.ipcRenderer.invoke("capture:save-image", dataUrl)
@@ -23,7 +28,11 @@ electron.contextBridge.exposeInMainWorld("captureApi", {
 electron.contextBridge.exposeInMainWorld("editorApi", {
   saveToClipboardAndPersist: (dataUrl) => {
     const image = electron.nativeImage.createFromDataURL(dataUrl);
-    electron.clipboard.writeImage(image);
+    if (!electron.clipboard || typeof electron.clipboard.writeImage !== "function") {
+      console.error("剪贴板对象不可用，无法写入图片");
+    } else {
+      electron.clipboard.writeImage(image);
+    }
     return electron.ipcRenderer.invoke("capture:save-image", dataUrl);
   },
   onImage: (handler) => {

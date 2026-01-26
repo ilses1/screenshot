@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer, screen } from 'electron'
+import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer, screen, clipboard } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -319,6 +319,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl: string) => {
     lastCaptureDataUrl = dataUrl
+
+    const image = nativeImage.createFromDataURL(dataUrl)
+    clipboard.writeImage(image)
 
     if (!config.autoSaveToFile) return null
 

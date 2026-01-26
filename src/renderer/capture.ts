@@ -40,6 +40,7 @@ function setCanvasSize(width: number, height: number) {
  * 右键/菜单键：关闭截图窗口（等同取消）。
  */
 function onContextMenu(e: Event) {
+  console.log('触发 contextmenu 事件，关闭截图窗口')
   e.preventDefault()
   window.close()
 }
@@ -48,6 +49,7 @@ function onContextMenu(e: Event) {
  * 捕获阶段拦截右键按下，避免页面或控件抢占右键事件。
  */
 function onDocumentMouseDown(e: MouseEvent) {
+  console.log('触发文档 mousedown 事件，按键：', e.button)
   if (e.button === 2) {
     e.preventDefault()
     window.close()
@@ -231,7 +233,7 @@ function getCanvasPoint(event: { clientX: number; clientY: number }) {
  * mouse 兜底：开始框选（用于 Pointer Events 不可用/不触发的环境）。
  */
 function onMouseDown(event: MouseEvent) {
-  
+  console.log('触发画布 mouse 按下事件，按键：', event.button, '位置：', event.clientX, event.clientY)
   if (activeInput === 'pointer') return
   if (event.button === 2) {
     window.close()
@@ -255,6 +257,7 @@ function onMouseDown(event: MouseEvent) {
  * mouse 兜底：更新框选。
  */
 function onMouseMove(event: MouseEvent) {
+  console.log('触发画布 mouse 移动事件，位置：', event.clientX, event.clientY)
   if (activeInput !== 'mouse') return
   if (!isSelecting) return
   const p = getCanvasPoint(event)
@@ -266,6 +269,7 @@ function onMouseMove(event: MouseEvent) {
  * mouse 兜底：结束框选。
  */
 function onMouseUp(_event: MouseEvent) {
+  console.log('触发画布 mouse 抬起事件，结束框选')
   if (activeInput !== 'mouse') return
   endSelection()
 }
@@ -274,7 +278,7 @@ function onMouseUp(_event: MouseEvent) {
  * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
  */
 function onPointerDown(event: PointerEvent) {
-  
+  console.log('触发画布 pointer 按下事件，按键：', event.button, '位置：', event.clientX, event.clientY)
   if (event.button === 2) {
     window.close()
     return
@@ -301,6 +305,7 @@ function onPointerDown(event: PointerEvent) {
  * 更新框选：根据当前指针位置更新终点坐标。
  */
 function onPointerMove(event: PointerEvent) {
+  console.log('触发画布 pointer 移动事件，位置：', event.clientX, event.clientY)
   if (activeInput !== 'pointer') return
   if (!isSelecting) return
   if (activePointerId !== null && event.pointerId !== activePointerId) return
@@ -327,6 +332,7 @@ function endSelection() {
  * 指针抬起：释放捕获并结束框选。
  */
 function onPointerUp(event: PointerEvent) {
+  console.log('触发画布 pointer 抬起事件')
   if (activeInput !== 'pointer') return
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
@@ -340,6 +346,7 @@ function onPointerUp(event: PointerEvent) {
  * 指针被系统取消（例如窗口失焦/触控中断）：释放捕获并退出。
  */
 function onPointerCancel(event: PointerEvent) {
+  console.log('触发画布 pointer 取消事件，关闭截图窗口')
   if (activeInput !== 'pointer') return
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
@@ -362,6 +369,7 @@ canvas.addEventListener('pointercancel', onPointerCancel)
  * 键盘操作：Esc 取消截图。
  */
 function onKeyDown(event: KeyboardEvent) {
+  console.log('触发键盘按下事件，按键：', event.key)
   if (event.key === 'Escape') {
     window.close()
   }
@@ -372,6 +380,7 @@ window.addEventListener('keydown', onKeyDown)
  * 窗口加载后主动获取焦点，便于立即响应键盘操作。
  */
 function onWindowLoad() {
+  console.log('触发窗口 load 事件，窗口获取焦点')
   window.focus()
 }
 window.addEventListener('load', onWindowLoad)
@@ -380,6 +389,7 @@ window.addEventListener('load', onWindowLoad)
  * 兜底 resize：窗口尺寸变化时同步画布尺寸。
  */
 function onWindowResize() {
+  console.log('触发窗口 resize 事件，新尺寸：', window.innerWidth, window.innerHeight)
   setCanvasSize(window.innerWidth, window.innerHeight)
 }
 window.addEventListener('resize', onWindowResize)
@@ -388,6 +398,7 @@ window.addEventListener('resize', onWindowResize)
  * 主进程开启截图后下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区。
  */
 function onCaptureSetBackground(payload: unknown) {
+  console.log('收到主进程下发截图背景数据事件，payload：', payload)
   if (!payload || typeof payload !== 'object') return
   const { dataUrl, displaySize, scaleFactor: displayScaleFactor } = payload as any
   if (typeof dataUrl !== 'string' || !displaySize) return
