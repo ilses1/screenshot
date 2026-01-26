@@ -1,9 +1,11 @@
-import { desktopCapturer, screen, clipboard, nativeImage, ipcRenderer } from 'electron'
+import { clipboard, nativeImage, ipcRenderer } from 'electron'
 
 const canvas = document.getElementById('capture-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
+const tipEl = document.getElementById('capture-tip') as HTMLDivElement | null
 
 let backgroundImage: HTMLImageElement | null = null
+let scaleFactor = 1
 let isSelecting = false
 let startX = 0
 let startY = 0
@@ -49,50 +51,26 @@ function draw() {
     ctx.lineWidth = 2
     ctx.strokeRect(x + 0.5, y + 0.5, width, height)
     ctx.restore()
+
+    if (tipEl) {
+      tipEl.textContent = `区域：${Math.round(width)} × ${Math.round(height)}（Esc/右键取消）`
+    }
   }
 
   requestAnimationFrame(draw)
 }
 
-async function captureScreen() {
-  const display = screen.getPrimaryDisplay()
-  const { width, height } = display.size
-  const { scaleFactor } = display
-
-  console.log('[capture] primary display', {
-    size: display.size,
-    bounds: display.bounds,
-    scaleFactor
-  })
-
-  canvas.width = width
-  canvas.height = height
-
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: Math.round(width * scaleFactor), height: Math.round(height * scaleFactor) }
-  })
-
-  if (!sources.length) {
-    console.error('[capture] no screen sources found')
-    throw new Error('no screen sources')
-  }
-
-  const primarySource = sources[0]
-  const image = primarySource.thumbnail
-
-  if (image.isEmpty()) {
-    console.error('[capture] primary source thumbnail is empty')
-    throw new Error('empty thumbnail')
-  }
-
-  const buffer = image.toPNG()
-  const url = `data:image/png;base64,${buffer.toString('base64')}`
+function setBackground(dataUrl: string, displaySize: { width: number; height: number }, displayScaleFactor: number) {
+  scaleFactor = typeof displayScaleFactor === 'number' && Number.isFinite(displayScaleFactor) ? displayScaleFactor : 1
+  canvas.width = displaySize.width
+  canvas.height = displaySize.height
 
   backgroundImage = new Image()
-  backgroundImage.src = url
+  backgroundImage.src = dataUrl
   backgroundImage.onload = () => {
-    console.log('[capture] background image loaded')
+    if (tipEl) {
+      tipEl.textContent = '按住左键拖动选择区域，松开完成截图，Esc/右键取消'
+    }
     draw()
   }
 }
@@ -106,11 +84,16 @@ function finishSelection() {
     return
   }
 
+  const sx = Math.round(x * scaleFactor)
+  const sy = Math.round(y * scaleFactor)
+  const sw = Math.round(width * scaleFactor)
+  const sh = Math.round(height * scaleFactor)
+
   const output = document.createElement('canvas')
-  output.width = width
-  output.height = height
+  output.width = sw
+  output.height = sh
   const octx = output.getContext('2d')!
-  octx.drawImage(backgroundImage, x, y, width, height, 0, 0, width, height)
+  octx.drawImage(backgroundImage, sx, sy, sw, sh, 0, 0, sw, sh)
 
   const dataUrl = output.toDataURL('image/png')
   const image = nativeImage.createFromDataURL(dataUrl)
@@ -158,7 +141,9 @@ window.addEventListener('load', () => {
   window.focus()
 })
 
-captureScreen().catch(error => {
-  console.error('captureScreen error', error)
-  window.close()
+ipcRenderer.on('capture:set-background', (_event, payload) => {
+  if (!payload || typeof payload !== 'object') return
+  const { dataUrl, displaySize, scaleFactor: displayScaleFactor } = payload as any
+  if (typeof dataUrl !== 'string' || !displaySize) return
+  setBackground(dataUrl, displaySize, displayScaleFactor)
 })

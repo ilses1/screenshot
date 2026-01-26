@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer } from 'electron'
+import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer, screen } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -116,16 +116,22 @@ function createCaptureWindow() {
     return
   }
 
+  const cursorPoint = screen.getCursorScreenPoint()
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
+
   console.log('[main] creating captureWindow')
   captureWindow = new BrowserWindow({
-    fullscreen: true,
+    x: targetDisplay.bounds.x,
+    y: targetDisplay.bounds.y,
+    width: targetDisplay.bounds.width,
+    height: targetDisplay.bounds.height,
     frame: false,
     transparent: true,
     resizable: false,
     movable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    show: true,
+    show: false,
     backgroundColor: '#00000000',
     webPreferences: {
       nodeIntegration: true,
@@ -145,15 +151,52 @@ function createCaptureWindow() {
     console.error('[main] captureWindow did-fail-load', errorCode, errorDescription)
   })
 
-  captureWindow.webContents.once('did-finish-load', () => {
+  captureWindow.webContents.once('did-finish-load', async () => {
     console.log('[main] captureWindow did-finish-load')
     if (isDev) {
       captureWindow?.webContents.openDevTools({ mode: 'detach' })
     }
+    try {
+      const thumbnailSize = {
+        width: Math.round(targetDisplay.size.width * targetDisplay.scaleFactor),
+        height: Math.round(targetDisplay.size.height * targetDisplay.scaleFactor)
+      }
+
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize
+      })
+
+      const displayId = String(targetDisplay.id)
+      const source =
+        sources.find(s => (s as any).display_id === displayId) ??
+        sources[0]
+
+      if (!source) {
+        throw new Error('no screen sources')
+      }
+
+      const image = source.thumbnail
+      if (image.isEmpty()) {
+        throw new Error('empty thumbnail')
+      }
+
+      captureWindow?.webContents.send('capture:set-background', {
+        dataUrl: image.toDataURL(),
+        displaySize: targetDisplay.size,
+        scaleFactor: targetDisplay.scaleFactor
+      })
+
+      captureWindow?.show()
+      captureWindow?.focus()
+    } catch (error) {
+      console.error('[main] captureWindow capture error', error)
+      captureWindow?.close()
+      return
+    }
     if (tray) {
       updateTrayMenu()
     }
-    captureWindow?.focus()
   })
 
   captureWindow.on('closed', () => {
