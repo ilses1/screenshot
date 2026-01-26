@@ -12,6 +12,11 @@ let startY = 0
 let currentX = 0
 let currentY = 0
 
+/**
+ * 设置截图画布的像素尺寸与 CSS 展示尺寸。
+ * - canvas.width/height：用于实际绘制的像素尺寸
+ * - canvas.style.width/height：用于页面布局的展示尺寸
+ */
 function setCanvasSize(width: number, height: number) {
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
@@ -20,21 +25,31 @@ function setCanvasSize(width: number, height: number) {
   canvas.style.width = `${w}px`
   canvas.style.height = `${h}px`
 }
-document.addEventListener('contextmenu', e => {
+
+/**
+ * 右键/菜单键：关闭截图窗口（等同取消）。
+ */
+function onContextMenu(e: Event) {
   e.preventDefault()
   window.close()
-})
-document.addEventListener(
-  'mousedown',
-  e => {
-    if ((e as MouseEvent).button === 2) {
-      e.preventDefault()
-      window.close()
-    }
-  },
-  { capture: true }
-)
+}
 
+/**
+ * 捕获阶段拦截右键按下，避免页面或控件抢占右键事件。
+ */
+function onDocumentMouseDown(e: MouseEvent) {
+  if (e.button === 2) {
+    e.preventDefault()
+    window.close()
+  }
+}
+
+document.addEventListener('contextmenu', onContextMenu)
+document.addEventListener('mousedown', onDocumentMouseDown, { capture: true })
+
+/**
+ * 获取当前选区（将起点与终点归一化为左上角 + 宽高）。
+ */
 function getSelectionRect() {
   const x = Math.min(startX, currentX)
   const y = Math.min(startY, currentY)
@@ -43,6 +58,9 @@ function getSelectionRect() {
   return { x, y, width, height }
 }
 
+/**
+ * 绘制循环：背景图 + 半透明遮罩 + 选区边框/提示。
+ */
 function draw() {
   if (!backgroundImage) return
 
@@ -69,6 +87,11 @@ function draw() {
   requestAnimationFrame(draw)
 }
 
+/**
+ * 设置背景截图与尺寸/缩放信息。
+ * displaySize：显示器逻辑尺寸（CSS 像素）
+ * displayScaleFactor：系统缩放（用于裁剪时把逻辑坐标换算到物理像素）
+ */
 function setBackground(dataUrl: string, displaySize: { width: number; height: number }, displayScaleFactor: number) {
   scaleFactor = typeof displayScaleFactor === 'number' && Number.isFinite(displayScaleFactor) ? displayScaleFactor : 1
   const width =
@@ -83,14 +106,22 @@ function setBackground(dataUrl: string, displaySize: { width: number; height: nu
 
   backgroundImage = new Image()
   backgroundImage.src = dataUrl
-  backgroundImage.onload = () => {
-    if (tipEl) {
-      tipEl.textContent = '按住左键拖动选择区域，松开完成截图，Esc/右键取消'
-    }
-    draw()
-  }
+  backgroundImage.onload = onBackgroundLoaded
 }
 
+/**
+ * 背景图加载完成后启动绘制循环并更新提示文案。
+ */
+function onBackgroundLoaded() {
+  if (tipEl) {
+    tipEl.textContent = '按住左键拖动选择区域，松开完成截图，Esc/右键取消'
+  }
+  draw()
+}
+
+/**
+ * 结束选区并将裁剪结果写入剪贴板；同时按配置决定是否落盘/打开编辑器。
+ */
 function finishSelection() {
   if (!backgroundImage) return
 
@@ -122,49 +153,158 @@ function finishSelection() {
   window.close()
 }
 
-canvas.addEventListener('mousedown', event => {
+let activePointerId: number | null = null
+let isGlobalPointerListening = false
+
+/**
+ * 兜底：在拖动期间把 move/up/cancel 同时绑定到 window，避免 setPointerCapture 失败时丢事件。
+ */
+function attachGlobalPointerListeners() {
+  if (isGlobalPointerListening) return
+  isGlobalPointerListening = true
+  window.addEventListener('pointermove', onPointerMove, { passive: false })
+  window.addEventListener('pointerup', onPointerUp, { passive: false })
+  window.addEventListener('pointercancel', onPointerCancel, { passive: false })
+}
+
+/**
+ * 解除兜底的全局指针监听，避免退出后残留监听器。
+ */
+function detachGlobalPointerListeners() {
+  if (!isGlobalPointerListening) return
+  isGlobalPointerListening = false
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerCancel)
+}
+
+/**
+ * 将指针事件的 client 坐标换算为画布坐标，并夹紧到画布范围内。
+ * 需要同时考虑 canvas 像素尺寸与 DOM 展示尺寸不一致（高 DPI/缩放）的问题。
+ */
+function getCanvasPoint(event: { clientX: number; clientY: number }) {
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = rect.width ? canvas.width / rect.width : 1
+  const scaleY = rect.height ? canvas.height / rect.height : 1
+  const x = (event.clientX - rect.left) * scaleX
+  const y = (event.clientY - rect.top) * scaleY
+  const clampedX = Math.max(0, Math.min(canvas.width, x))
+  const clampedY = Math.max(0, Math.min(canvas.height, y))
+  return { x: clampedX, y: clampedY }
+}
+
+/**
+ * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
+ */
+function onPointerDown(event: PointerEvent) {
   if (event.button === 2) {
     window.close()
     return
   }
+  if (event.button !== 0) return
+
+  event.preventDefault()
+  activePointerId = event.pointerId
+  try {
+    canvas.setPointerCapture(event.pointerId)
+  } catch {}
 
   isSelecting = true
-  startX = event.offsetX
-  startY = event.offsetY
+  attachGlobalPointerListeners()
+  const p = getCanvasPoint(event)
+  startX = p.x
+  startY = p.y
   currentX = startX
   currentY = startY
-})
+}
 
-canvas.addEventListener('mousemove', event => {
+/**
+ * 更新框选：根据当前指针位置更新终点坐标。
+ */
+function onPointerMove(event: PointerEvent) {
   if (!isSelecting) return
-  currentX = event.offsetX
-  currentY = event.offsetY
-})
+  if (activePointerId !== null && event.pointerId !== activePointerId) return
+  event.preventDefault()
+  const p = getCanvasPoint(event)
+  currentX = p.x
+  currentY = p.y
+}
 
-canvas.addEventListener('mouseup', () => {
+/**
+ * 结束框选：停止框选状态并触发裁剪保存。
+ */
+function endSelection() {
   if (!isSelecting) return
   isSelecting = false
+  activePointerId = null
+  detachGlobalPointerListeners()
   finishSelection()
-})
+}
 
-window.addEventListener('keydown', event => {
+/**
+ * 指针抬起：释放捕获并结束框选。
+ */
+function onPointerUp(event: PointerEvent) {
+  if (activePointerId !== null && event.pointerId === activePointerId) {
+    try {
+      canvas.releasePointerCapture(event.pointerId)
+    } catch {}
+  }
+  endSelection()
+}
+
+/**
+ * 指针被系统取消（例如窗口失焦/触控中断）：释放捕获并退出。
+ */
+function onPointerCancel(event: PointerEvent) {
+  if (activePointerId !== null && event.pointerId === activePointerId) {
+    try {
+      canvas.releasePointerCapture(event.pointerId)
+    } catch {}
+  }
+  detachGlobalPointerListeners()
+  window.close()
+}
+
+canvas.addEventListener('pointerdown', onPointerDown)
+canvas.addEventListener('pointermove', onPointerMove)
+canvas.addEventListener('pointerup', onPointerUp)
+canvas.addEventListener('pointercancel', onPointerCancel)
+
+/**
+ * 键盘操作：Esc 取消截图。
+ */
+function onKeyDown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     window.close()
   }
-})
+}
+window.addEventListener('keydown', onKeyDown)
 
-window.addEventListener('load', () => {
+/**
+ * 窗口加载后主动获取焦点，便于立即响应键盘操作。
+ */
+function onWindowLoad() {
   window.focus()
-})
+}
+window.addEventListener('load', onWindowLoad)
 
-window.addEventListener('resize', () => {
+/**
+ * 兜底 resize：窗口尺寸变化时同步画布尺寸。
+ */
+function onWindowResize() {
   setCanvasSize(window.innerWidth, window.innerHeight)
-})
+}
+window.addEventListener('resize', onWindowResize)
 
-ipcRenderer.on('capture:set-background', (_event, payload) => {
+/**
+ * 主进程开启截图后下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区。
+ */
+function onCaptureSetBackground(_event: unknown, payload: unknown) {
   // 主进程开启截图时会发送该事件：下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区
   if (!payload || typeof payload !== 'object') return
   const { dataUrl, displaySize, scaleFactor: displayScaleFactor } = payload as any
   if (typeof dataUrl !== 'string' || !displaySize) return
   setBackground(dataUrl, displaySize, displayScaleFactor)
-})
+}
+ipcRenderer.on('capture:set-background', onCaptureSetBackground)
