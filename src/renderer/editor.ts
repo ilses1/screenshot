@@ -7,7 +7,7 @@ declare global {
   }
 }
 
-type Tool = 'pen' | 'rect'
+type Tool = 'pen' | 'rect' | 'arrow' | 'text'
 
 const canvas = document.getElementById('editor-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
@@ -28,6 +28,8 @@ let lastY = 0
 type Stroke =
   | { type: 'pen'; points: { x: number; y: number }[] }
   | { type: 'rect'; x: number; y: number; w: number; h: number }
+  | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number }
+  | { type: 'text'; x: number; y: number; text: string }
 
 const strokes: Stroke[] = []
 
@@ -56,6 +58,7 @@ function redraw() {
 
   ctx.lineWidth = 2
   ctx.strokeStyle = '#f97316'
+  ctx.fillStyle = '#f97316'
 
   for (const stroke of strokes) {
     if (stroke.type === 'pen') {
@@ -70,11 +73,43 @@ function redraw() {
       ctx.stroke()
     } else if (stroke.type === 'rect') {
       ctx.strokeRect(stroke.x, stroke.y, stroke.w, stroke.h)
+    } else if (stroke.type === 'arrow') {
+      const headLength = 10
+      const dx = stroke.x2 - stroke.x1
+      const dy = stroke.y2 - stroke.y1
+      const angle = Math.atan2(dy, dx)
+      ctx.beginPath()
+      ctx.moveTo(stroke.x1, stroke.y1)
+      ctx.lineTo(stroke.x2, stroke.y2)
+      ctx.moveTo(
+        stroke.x2 - headLength * Math.cos(angle - Math.PI / 6),
+        stroke.y2 - headLength * Math.sin(angle - Math.PI / 6)
+      )
+      ctx.lineTo(stroke.x2, stroke.y2)
+      ctx.lineTo(
+        stroke.x2 - headLength * Math.cos(angle + Math.PI / 6),
+        stroke.y2 - headLength * Math.sin(angle + Math.PI / 6)
+      )
+      ctx.stroke()
+    } else if (stroke.type === 'text') {
+      ctx.fillText(stroke.text, stroke.x, stroke.y)
     }
   }
 }
 
+function addTextAt(x: number, y: number) {
+  const text = window.prompt('输入文字')?.trim()
+  if (!text) return
+  strokes.push({ type: 'text', x, y, text })
+  redraw()
+}
+
 function startDrawing(x: number, y: number) {
+  if (tool === 'text') {
+    addTextAt(x, y)
+    return
+  }
+
   drawing = true
   lastX = x
   lastY = y
@@ -83,6 +118,8 @@ function startDrawing(x: number, y: number) {
     strokes.push({ type: 'pen', points: [{ x, y }] })
   } else if (tool === 'rect') {
     strokes.push({ type: 'rect', x, y, w: 0, h: 0 })
+  } else if (tool === 'arrow') {
+    strokes.push({ type: 'arrow', x1: x, y1: y, x2: x, y2: y })
   }
 }
 
@@ -96,6 +133,9 @@ function continueDrawing(x: number, y: number) {
   } else if (stroke.type === 'rect') {
     stroke.w = x - stroke.x
     stroke.h = y - stroke.y
+  } else if (stroke.type === 'arrow') {
+    stroke.x2 = x
+    stroke.y2 = y
   }
 
   lastX = x

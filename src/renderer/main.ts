@@ -16,13 +16,13 @@ declare global {
  const app = document.getElementById('app')!
  
  function renderSettingsUI() {
-   app.innerHTML = `
+  app.innerHTML = `
   <main style="font-family: system-ui, sans-serif; padding: 24px; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
     <h1 style="font-size: 24px; margin-bottom: 16px;">截图工具设置</h1>
     <section style="margin-bottom: 16px;">
       <label style="display: block; margin-bottom: 8px;">
         截图快捷键：
-        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" />
+        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" placeholder="例如 F2 或 Ctrl+Shift+F2" />
       </label>
     </section>
     <section style="margin-bottom: 16px;">
@@ -36,7 +36,7 @@ declare global {
       </label>
       <label style="display: flex; align-items: center; gap: 8px;">
         <input id="open-editor-input" type="checkbox" />
-        截图后自动打开编辑器（预留）
+        截图后自动打开编辑器
       </label>
     </section>
     <button id="save-button" style="padding: 6px 12px;">保存设置</button>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>屏幕截图</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      cursor: crosshair;
+      background: rgba(255, 155, 6, 0.1);
+    }
+
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+
+    #capture-tip {
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+  <script type="module" crossorigin src="./assets/capture-B0nF4fzc.js"></script>
+</head>
+
+<body>
+  <div id="capture-tip"
+    style="position: fixed; top: 12px; left: 12px; padding: 6px 10px; background: rgba(0, 0, 0, 0.6); color: #f9fafb; font-size: 12px; border-radius: 4px; z-index: 10;">
+    按住左键拖动选择区域，松开完成截图，Esc/右键取消
+  </div>
+  <canvas id="capture-canvas"></canvas>
+</body>
+
+</html>

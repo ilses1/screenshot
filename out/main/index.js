@@ -56,7 +56,7 @@ function loadConfig() {
         hotkey: parsed.hotkey ?? "F2",
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir: parsed.saveDir ?? path.join(app.getPath("pictures"), "ElectronScreenshot"),
-        openEditorAfterCapture: parsed.openEditorAfterCapture ?? false
+        openEditorAfterCapture: parsed.openEditorAfterCapture ?? true
       };
       return;
     } catch {
@@ -66,7 +66,7 @@ function loadConfig() {
     hotkey: "F2",
     autoSaveToFile: false,
     saveDir: path.join(app.getPath("pictures"), "ElectronScreenshot"),
-    openEditorAfterCapture: false
+    openEditorAfterCapture: true
   };
 }
 function saveConfig() {
@@ -231,16 +231,21 @@ function createEditorWindow() {
 }
 function createTray() {
   if (tray) return;
-  const iconPath = path.join(__dirname, "../../assets/icon.png");
+  const iconPath = path.join(app.getAppPath(), "assets", "icon.png");
   const icon = nativeImage.createFromPath(iconPath);
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon;
   tray = new Tray(trayIcon);
-  tray.setToolTip("Electron 截图");
+  const hotkeyText = config?.hotkey || "F2";
+  tray.setToolTip(`截图助手 - 按 ${hotkeyText} 开始截图`);
   updateTrayMenu();
 }
 function registerShortcuts() {
   globalShortcut.unregisterAll();
-  if (!config?.hotkey) return;
+  if (!config) return;
+  if (!config.hotkey || !config.hotkey.trim()) {
+    config.hotkey = "F2";
+    saveConfig();
+  }
   const handler = () => {
     console.log("[main] global shortcut triggered", config.hotkey);
     if (isCaptureActive()) {
@@ -250,6 +255,7 @@ function registerShortcuts() {
     }
   };
   let ok = globalShortcut.register(config.hotkey, handler);
+  console.log("是否注册快捷键成功", ok, config.hotkey);
   if (!ok) {
     const fallbacks = ["Alt+Shift+A", "CommandOrControl+Shift+A"];
     for (const key of fallbacks) {
@@ -277,24 +283,26 @@ function registerIpcHandlers() {
     lastCaptureDataUrl = dataUrl;
     const image = nativeImage.createFromDataURL(dataUrl);
     clipboard.writeImage(image);
-    if (!config.autoSaveToFile) return null;
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-    const buffer = Buffer.from(base64, "base64");
-    const dir = config.saveDir;
-    await fs.promises.mkdir(dir, { recursive: true });
-    const filename = `screenshot-${Date.now()}.png`;
-    const filePath = path.join(dir, filename);
-    await fs.promises.writeFile(filePath, buffer);
-    const record = {
-      id: randomUUID(),
-      filePath,
-      createdAt: Date.now()
-    };
-    history.unshift(record);
-    if (history.length > 100) {
-      history = history.slice(0, 100);
+    let filePath = null;
+    if (config.autoSaveToFile) {
+      const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+      const buffer = Buffer.from(base64, "base64");
+      const dir = config.saveDir;
+      await fs.promises.mkdir(dir, { recursive: true });
+      const filename = `screenshot-${Date.now()}.png`;
+      filePath = path.join(dir, filename);
+      await fs.promises.writeFile(filePath, buffer);
+      const record = {
+        id: randomUUID(),
+        filePath,
+        createdAt: Date.now()
+      };
+      history.unshift(record);
+      if (history.length > 100) {
+        history = history.slice(0, 100);
+      }
+      saveHistory();
     }
-    saveHistory();
     if (config.openEditorAfterCapture) {
       createEditorWindow();
       editorWindow?.webContents.send("editor:image", dataUrl);
@@ -370,6 +378,7 @@ app.on("will-quit", () => {
 });
 function updateTrayMenu() {
   if (!tray) return;
+  const hotkeyText = config?.hotkey || "F2";
   const contextMenu = Menu.buildFromTemplate([
     {
       label: isCaptureActive() ? "结束截图" : "截图",
@@ -401,5 +410,7 @@ function updateTrayMenu() {
     }
   ]);
   tray.setContextMenu(contextMenu);
-  tray.setToolTip(isCaptureActive() ? "Electron 截图（正在截图）" : "Electron 截图");
+  tray.setToolTip(
+    isCaptureActive() ? `截图助手 - 按 ${hotkeyText} 开始截图（正在截图）` : `截图助手 - 按 ${hotkeyText} 开始截图`
+  );
 }
