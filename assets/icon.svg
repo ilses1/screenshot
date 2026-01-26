@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Color 1: Blue - Top Left Crop Mark -->
+  <path d="M96 224V96H224" stroke="#3B82F6" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Color 2: Purple - Bottom Right Crop Mark -->
+  <path d="M416 288V416H288" stroke="#8B5CF6" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Color 3: Pink - Center Shutter/Focus Point -->
+  <circle cx="256" cy="256" r="72" fill="#EC4899"/>
+</svg>

@@ -231,7 +231,7 @@ function createEditorWindow() {
 }
 function createTray() {
   if (tray) return;
-  const iconPath = path.join(app.getAppPath(), "assets", "icon.png");
+  const iconPath = path.join(app.getAppPath(), "assets", "favicon.ico");
   const icon = nativeImage.createFromPath(iconPath);
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon;
   tray = new Tray(trayIcon);
