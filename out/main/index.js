@@ -36,7 +36,7 @@ function loadConfig() {
     try {
       const parsed = JSON.parse(raw);
       config = {
-        hotkey: parsed.hotkey ?? "Alt+`",
+        hotkey: parsed.hotkey ?? "F2",
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir: parsed.saveDir ?? path.join(app.getPath("pictures"), "ElectronScreenshot"),
         openEditorAfterCapture: parsed.openEditorAfterCapture ?? false
@@ -46,7 +46,7 @@ function loadConfig() {
     }
   }
   config = {
-    hotkey: "Alt+`",
+    hotkey: "F2",
     autoSaveToFile: false,
     saveDir: path.join(app.getPath("pictures"), "ElectronScreenshot"),
     openEditorAfterCapture: false

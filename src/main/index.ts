@@ -32,7 +32,7 @@ function loadConfig() {
     try {
       const parsed = JSON.parse(raw)
       config = {
-        hotkey: parsed.hotkey ?? 'Alt+`',
+        hotkey: parsed.hotkey ?? 'F2',
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir:
           parsed.saveDir ??
@@ -46,7 +46,7 @@ function loadConfig() {
   }
 
   config = {
-    hotkey: 'Alt+`',
+    hotkey: 'F2',
     autoSaveToFile: false,
     saveDir: path.join(app.getPath('pictures'), 'ElectronScreenshot'),
     openEditorAfterCapture: false
@@ -242,6 +242,7 @@ function createTray() {
   if (tray) return
 
   const iconPath = path.join(__dirname, '../../assets/icon.png')
+  // 优先使用 PNG 图标以兼容 Windows；源文件为 assets/icon.svg
   const icon = nativeImage.createFromPath(iconPath)
 
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon

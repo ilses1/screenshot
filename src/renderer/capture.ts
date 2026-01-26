@@ -123,7 +123,10 @@ function onBackgroundLoaded() {
  * 结束选区并将裁剪结果写入剪贴板；同时按配置决定是否落盘/打开编辑器。
  */
 function finishSelection() {
-  if (!backgroundImage) return
+  if (!backgroundImage) {
+    window.close()
+    return
+  }
 
   const { x, y, width, height } = getSelectionRect()
   if (width < 5 || height < 5) {
@@ -153,8 +156,31 @@ function finishSelection() {
   window.close()
 }
 
+type ActiveInput = 'pointer' | 'mouse' | null
+let activeInput: ActiveInput = null
 let activePointerId: number | null = null
 let isGlobalPointerListening = false
+let isGlobalMouseListening = false
+
+/**
+ * 兜底：在拖动期间把 mousemove/mouseup 绑定到 window，避免移出画布时丢失 mouseup。
+ */
+function attachGlobalMouseListeners() {
+  if (isGlobalMouseListening) return
+  isGlobalMouseListening = true
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+}
+
+/**
+ * 解除兜底的全局鼠标监听，避免退出后残留监听器。
+ */
+function detachGlobalMouseListeners() {
+  if (!isGlobalMouseListening) return
+  isGlobalMouseListening = false
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
+}
 
 /**
  * 兜底：在拖动期间把 move/up/cancel 同时绑定到 window，避免 setPointerCapture 失败时丢事件。
@@ -194,6 +220,48 @@ function getCanvasPoint(event: { clientX: number; clientY: number }) {
 }
 
 /**
+ * mouse 兜底：开始框选（用于 Pointer Events 不可用/不触发的环境）。
+ */
+function onMouseDown(event: MouseEvent) {
+  if (activeInput === 'pointer') return
+  if (event.button === 2) {
+    window.close()
+    return
+  }
+  if (event.button !== 0) return
+
+  event.preventDefault()
+  activeInput = 'mouse'
+  isSelecting = true
+  attachGlobalMouseListeners()
+
+  const p = getCanvasPoint(event)
+  startX = p.x
+  startY = p.y
+  currentX = startX
+  currentY = startY
+}
+
+/**
+ * mouse 兜底：更新框选。
+ */
+function onMouseMove(event: MouseEvent) {
+  if (activeInput !== 'mouse') return
+  if (!isSelecting) return
+  const p = getCanvasPoint(event)
+  currentX = p.x
+  currentY = p.y
+}
+
+/**
+ * mouse 兜底：结束框选。
+ */
+function onMouseUp(_event: MouseEvent) {
+  if (activeInput !== 'mouse') return
+  endSelection()
+}
+
+/**
  * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
  */
 function onPointerDown(event: PointerEvent) {
@@ -204,6 +272,7 @@ function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
 
   event.preventDefault()
+  activeInput = 'pointer'
   activePointerId = event.pointerId
   try {
     canvas.setPointerCapture(event.pointerId)
@@ -222,6 +291,7 @@ function onPointerDown(event: PointerEvent) {
  * 更新框选：根据当前指针位置更新终点坐标。
  */
 function onPointerMove(event: PointerEvent) {
+  if (activeInput !== 'pointer') return
   if (!isSelecting) return
   if (activePointerId !== null && event.pointerId !== activePointerId) return
   event.preventDefault()
@@ -236,8 +306,10 @@ function onPointerMove(event: PointerEvent) {
 function endSelection() {
   if (!isSelecting) return
   isSelecting = false
+  activeInput = null
   activePointerId = null
   detachGlobalPointerListeners()
+  detachGlobalMouseListeners()
   finishSelection()
 }
 
@@ -245,6 +317,7 @@ function endSelection() {
  * 指针抬起：释放捕获并结束框选。
  */
 function onPointerUp(event: PointerEvent) {
+  if (activeInput !== 'pointer') return
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
       canvas.releasePointerCapture(event.pointerId)
@@ -257,15 +330,19 @@ function onPointerUp(event: PointerEvent) {
  * 指针被系统取消（例如窗口失焦/触控中断）：释放捕获并退出。
  */
 function onPointerCancel(event: PointerEvent) {
+  if (activeInput !== 'pointer') return
   if (activePointerId !== null && event.pointerId === activePointerId) {
     try {
       canvas.releasePointerCapture(event.pointerId)
     } catch {}
   }
   detachGlobalPointerListeners()
+  activeInput = null
+  detachGlobalMouseListeners()
   window.close()
 }
 
+canvas.addEventListener('mousedown', onMouseDown)
 canvas.addEventListener('pointerdown', onPointerDown)
 canvas.addEventListener('pointermove', onPointerMove)
 canvas.addEventListener('pointerup', onPointerUp)
