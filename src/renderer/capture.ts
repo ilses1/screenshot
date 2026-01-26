@@ -11,6 +11,15 @@ let startX = 0
 let startY = 0
 let currentX = 0
 let currentY = 0
+
+function setCanvasSize(width: number, height: number) {
+  const w = Math.max(1, Math.round(width))
+  const h = Math.max(1, Math.round(height))
+  canvas.width = w
+  canvas.height = h
+  canvas.style.width = `${w}px`
+  canvas.style.height = `${h}px`
+}
 document.addEventListener('contextmenu', e => {
   e.preventDefault()
   window.close()
@@ -62,8 +71,15 @@ function draw() {
 
 function setBackground(dataUrl: string, displaySize: { width: number; height: number }, displayScaleFactor: number) {
   scaleFactor = typeof displayScaleFactor === 'number' && Number.isFinite(displayScaleFactor) ? displayScaleFactor : 1
-  canvas.width = displaySize.width
-  canvas.height = displaySize.height
+  const width =
+    displaySize && typeof displaySize.width === 'number' && Number.isFinite(displaySize.width)
+      ? displaySize.width
+      : window.innerWidth
+  const height =
+    displaySize && typeof displaySize.height === 'number' && Number.isFinite(displaySize.height)
+      ? displaySize.height
+      : window.innerHeight
+  setCanvasSize(width, height)
 
   backgroundImage = new Image()
   backgroundImage.src = dataUrl
@@ -141,7 +157,12 @@ window.addEventListener('load', () => {
   window.focus()
 })
 
+window.addEventListener('resize', () => {
+  setCanvasSize(window.innerWidth, window.innerHeight)
+})
+
 ipcRenderer.on('capture:set-background', (_event, payload) => {
+  // 主进程开启截图时会发送该事件：下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区
   if (!payload || typeof payload !== 'object') return
   const { dataUrl, displaySize, scaleFactor: displayScaleFactor } = payload as any
   if (typeof dataUrl !== 'string' || !displaySize) return

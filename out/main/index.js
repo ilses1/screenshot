@@ -143,8 +143,8 @@ function createCaptureWindow() {
     }
     try {
       const thumbnailSize = {
-        width: Math.round(targetDisplay.size.width * targetDisplay.scaleFactor),
-        height: Math.round(targetDisplay.size.height * targetDisplay.scaleFactor)
+        width: Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor),
+        height: Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor)
       };
       const sources = await desktopCapturer.getSources({
         types: ["screen"],
@@ -161,7 +161,7 @@ function createCaptureWindow() {
       }
       captureWindow?.webContents.send("capture:set-background", {
         dataUrl: image.toDataURL(),
-        displaySize: targetDisplay.size,
+        displaySize: { width: targetDisplay.bounds.width, height: targetDisplay.bounds.height },
         scaleFactor: targetDisplay.scaleFactor
       });
       captureWindow?.show();

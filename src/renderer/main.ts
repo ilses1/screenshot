@@ -130,6 +130,7 @@ async function saveSettings() {
       saveDir: saveDirInput.value.trim(),
       openEditorAfterCapture: openEditorInput.checked
     }
+    // 保存后主进程会重新注册全局快捷键；截图的开启入口在主进程 createCaptureWindow()
     const updated = await window.api.updateSettings(patch)
     statusText.textContent = '设置已保存'
     setTimeout(() => {

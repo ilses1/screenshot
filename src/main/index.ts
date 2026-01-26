@@ -116,6 +116,7 @@ function createCaptureWindow() {
     return
   }
 
+  // 开启截图：创建全屏透明遮罩窗口（在光标所在显示器上）
   const cursorPoint = screen.getCursorScreenPoint()
   const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
 
@@ -158,8 +159,8 @@ function createCaptureWindow() {
     }
     try {
       const thumbnailSize = {
-        width: Math.round(targetDisplay.size.width * targetDisplay.scaleFactor),
-        height: Math.round(targetDisplay.size.height * targetDisplay.scaleFactor)
+        width: Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor),
+        height: Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor)
       }
 
       const sources = await desktopCapturer.getSources({
@@ -183,7 +184,7 @@ function createCaptureWindow() {
 
       captureWindow?.webContents.send('capture:set-background', {
         dataUrl: image.toDataURL(),
-        displaySize: targetDisplay.size,
+        displaySize: { width: targetDisplay.bounds.width, height: targetDisplay.bounds.height },
         scaleFactor: targetDisplay.scaleFactor
       })
 
@@ -253,6 +254,7 @@ function registerShortcuts() {
   globalShortcut.unregisterAll()
   if (!config?.hotkey) return
 
+  // 开启截图入口 1：全局快捷键（再次触发则关闭截图遮罩窗口）
   const handler = () => {
     console.log('[main] global shortcut triggered', config.hotkey)
     if (isCaptureActive()) {
@@ -408,6 +410,7 @@ function updateTrayMenu() {
     {
       label: isCaptureActive() ? '结束截图' : '截图',
       click: () => {
+        // 开启截图入口 2：托盘菜单（再次点击则关闭截图遮罩窗口）
         if (isCaptureActive()) {
           console.log('[main] tray menu click: stop capture')
           captureWindow?.close()
