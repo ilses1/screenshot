@@ -29,6 +29,12 @@ jobs:
           pnpm --version
           pnpm config get registry
 
+      - name: Configure registry
+        run: |
+          pnpm config set registry https://registry.npmjs.org/
+          pnpm config set electron_mirror https://github.com/electron/electron/releases/download/
+          pnpm config get registry
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
