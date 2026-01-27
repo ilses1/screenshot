@@ -11,6 +11,9 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +27,7 @@ jobs:
         run: |
           node --version
           pnpm --version
+          pnpm config get registry
 
       - name: Install
         run: pnpm install --frozen-lockfile
