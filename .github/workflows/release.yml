@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -47,7 +48,7 @@ jobs:
         run: pnpm run build
 
       - name: Package (NSIS)
-        run: pnpm run dist -- --win --x64
+        run: pnpm run dist -- --win --x64 --publish never
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
