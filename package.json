@@ -14,25 +14,6 @@
     "start": "electron-vite preview",
     "dist": "electron-builder"
   },
-  "build": {
-    "appId": "com.example.electron-screenshot",
-    "productName": "Electron Screenshot",
-    "directories": {
-      "buildResources": "assets"
-    },
-    "files": [
-      "out/**",
-      "src/renderer/**",
-      "assets/**",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "assets/favicon.ico"
-    }
-  },
   "dependencies": {
     "form-data": "^4.0.0"
   },

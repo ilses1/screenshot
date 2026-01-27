@@ -1,0 +1,21 @@
+# electron-builder 会自动查找根目录的配置文件（例如 electron-builder.yml / .yaml / .json 这类约定名） 所以文件名不可修改
+appId: com.example.electron-screenshot
+productName: Electron Screenshot
+
+directories:
+  buildResources: assets
+
+files:
+  - out/**
+  - src/renderer/**
+  - assets/**
+  - package.json
+
+win:
+  target:
+    - nsis
+  icon: assets/favicon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
