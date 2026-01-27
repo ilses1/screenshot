@@ -13,7 +13,6 @@ jobs:
     runs-on: windows-latest
     env:
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +38,6 @@ jobs:
         run: |
           Set-Content -Path .npmrc -Value @(
             'registry=https://registry.npmjs.org/'
-            'electron_mirror=https://github.com/electron/electron/releases/download/v'
           )
           Get-Content .npmrc
 
