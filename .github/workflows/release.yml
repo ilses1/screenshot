@@ -35,6 +35,14 @@ jobs:
           pnpm config set electron_mirror https://github.com/electron/electron/releases/download/
           pnpm config get registry
 
+      - name: Patch .npmrc for CI
+        run: |
+          Set-Content -Path .npmrc -Value @(
+            'registry=https://registry.npmjs.org/'
+            'electron_mirror=https://github.com/electron/electron/releases/download/'
+          )
+          Get-Content .npmrc
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
