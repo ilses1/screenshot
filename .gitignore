@@ -1,2 +1,5 @@
 node_modules
 dist
+
+# 忽略 .trae下文件
+.trae/
