@@ -25,13 +25,54 @@
       pointer-events: none;
       user-select: none;
     }
+
+    #capture-toolbar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      display: flex;
+      gap: 8px;
+      z-index: 20;
+      pointer-events: auto;
+      user-select: none;
+    }
+
+    #capture-toolbar button {
+      width: 36px;
+      height: 36px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #f9fafb;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+
+    #capture-toolbar button:hover {
+      background: rgba(0, 0, 0, 0.75);
+    }
+
+    #capture-toolbar button:active {
+      transform: translateY(1px);
+    }
+
+    #capture-toolbar button:focus-visible {
+      outline: 2px solid #3b82f6;
+      outline-offset: 2px;
+    }
   </style>
 </head>
 
 <body>
   <div id="capture-tip"
     style="position: fixed; top: 12px; left: 12px; padding: 6px 10px; background: rgba(0, 0, 0, 0.6); color: #f9fafb; font-size: 12px; border-radius: 4px; z-index: 10;">
-    按住左键拖动选择区域，松开完成截图，Esc/右键取消
+    按住左键拖动选择区域，松开后点击✓确认，Esc/右键取消
+  </div>
+  <div id="capture-toolbar" hidden>
+    <button id="capture-confirm" type="button" aria-label="确认">✓</button>
+    <button id="capture-cancel" type="button" aria-label="取消">✕</button>
   </div>
   <canvas id="capture-canvas"></canvas>
   <script type="module" src="./capture.ts"></script>

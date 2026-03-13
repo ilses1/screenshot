@@ -13,20 +13,56 @@ console.log('capture.ts 已加载')
 const canvas = document.getElementById('capture-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
 const tipEl = document.getElementById('capture-tip') as HTMLDivElement | null
+let toolbarEl = document.getElementById('capture-toolbar') as HTMLDivElement | null
+let confirmBtn = document.getElementById('capture-confirm') as HTMLButtonElement | null
+let cancelBtn = document.getElementById('capture-cancel') as HTMLButtonElement | null
+
+if (!toolbarEl) {
+  toolbarEl = document.createElement('div')
+  toolbarEl.id = 'capture-toolbar'
+  toolbarEl.hidden = true
+  toolbarEl.style.cssText =
+    'position:fixed;left:0;top:0;display:flex;gap:8px;z-index:20;pointer-events:auto;user-select:none;'
+
+  confirmBtn = document.createElement('button')
+  confirmBtn.id = 'capture-confirm'
+  confirmBtn.type = 'button'
+  confirmBtn.setAttribute('aria-label', '确认')
+  confirmBtn.textContent = '✓'
+  confirmBtn.style.cssText =
+    'width:36px;height:36px;border:1px solid rgba(255,255,255,0.15);border-radius:10px;background:rgba(0,0,0,0.6);color:#f9fafb;font-size:18px;line-height:1;cursor:pointer;backdrop-filter:blur(6px);'
+
+  cancelBtn = document.createElement('button')
+  cancelBtn.id = 'capture-cancel'
+  cancelBtn.type = 'button'
+  cancelBtn.setAttribute('aria-label', '取消')
+  cancelBtn.textContent = '✕'
+  cancelBtn.style.cssText =
+    'width:36px;height:36px;border:1px solid rgba(255,255,255,0.15);border-radius:10px;background:rgba(0,0,0,0.6);color:#f9fafb;font-size:18px;line-height:1;cursor:pointer;backdrop-filter:blur(6px);'
+
+  toolbarEl.append(confirmBtn, cancelBtn)
+  document.body.appendChild(toolbarEl)
+}
 
 let backgroundImage: HTMLImageElement | null = null
 let scaleFactor = 1
 let isSelecting = false
+let isPendingConfirm = false
+let isFinishing = false
 let startX = 0
 let startY = 0
 let currentX = 0
 let currentY = 0
 
-/**
- * 设置截图画布的像素尺寸与 CSS 展示尺寸。
- * - canvas.width/height：用于实际绘制的像素尺寸
- * - canvas.style.width/height：用于页面布局的展示尺寸
- */
+function setToolbarVisible(visible: boolean) {
+  if (!toolbarEl) return
+  toolbarEl.hidden = !visible
+  toolbarEl.style.display = visible ? 'flex' : 'none'
+  if (visible && isPendingConfirm) {
+    positionToolbarToSelection()
+  }
+}
+
 function setCanvasSize(width: number, height: number) {
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
@@ -36,18 +72,12 @@ function setCanvasSize(width: number, height: number) {
   canvas.style.height = `${h}px`
 }
 
-/**
- * 右键/菜单键：关闭截图窗口（等同取消）。
- */
 function onContextMenu(e: Event) {
   console.log('触发 contextmenu 事件，关闭截图窗口')
   e.preventDefault()
   window.close()
 }
 
-/**
- * 捕获阶段拦截右键按下，避免页面或控件抢占右键事件。
- */
 function onDocumentMouseDown(e: MouseEvent) {
   console.log('触发文档 mousedown 事件，按键：', e.button)
   if (e.button === 2) {
@@ -59,9 +89,6 @@ function onDocumentMouseDown(e: MouseEvent) {
 document.addEventListener('contextmenu', onContextMenu)
 document.addEventListener('mousedown', onDocumentMouseDown, { capture: true })
 
-/**
- * 获取当前选区（将起点与终点归一化为左上角 + 宽高）。
- */
 function getSelectionRect() {
   const x = Math.min(startX, currentX)
   const y = Math.min(startY, currentY)
@@ -70,40 +97,36 @@ function getSelectionRect() {
   return { x, y, width, height }
 }
 
-/**
- * 绘制循环：背景图 + 半透明遮罩 + 选区边框/提示。
- */
 function draw() {
   if (!backgroundImage) return
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height)
 
-  if (isSelecting) {
+  if (isSelecting || isPendingConfirm) {
     const { x, y, width, height } = getSelectionRect()
 
     ctx.save()
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.clearRect(x, y, width, height)
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.beginPath()
+    ctx.rect(0, 0, canvas.width, canvas.height)
+    ctx.rect(x, y, width, height)
+    ctx.fill('evenodd')
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 2
     ctx.strokeRect(x + 0.5, y + 0.5, width, height)
     ctx.restore()
 
     if (tipEl) {
-      tipEl.textContent = `区域：${Math.round(width)} × ${Math.round(height)}（Esc/右键取消）`
+      tipEl.textContent = isPendingConfirm
+        ? `区域：${Math.round(width)} × ${Math.round(height)}（点击✓确认，Esc/右键取消）`
+        : `区域：${Math.round(width)} × ${Math.round(height)}（Esc/右键取消）`
     }
   }
 
   requestAnimationFrame(draw)
 }
 
-/**
- * 设置背景截图与尺寸/缩放信息。
- * displaySize：显示器逻辑尺寸（CSS 像素）
- * displayScaleFactor：系统缩放（用于裁剪时把逻辑坐标换算到物理像素）
- */
 function setBackground(dataUrl: string, displaySize: { width: number; height: number }, displayScaleFactor: number) {
   scaleFactor = typeof displayScaleFactor === 'number' && Number.isFinite(displayScaleFactor) ? displayScaleFactor : 1
   const width =
@@ -121,20 +144,17 @@ function setBackground(dataUrl: string, displaySize: { width: number; height: nu
   backgroundImage.onload = onBackgroundLoaded
 }
 
-/**
- * 背景图加载完成后启动绘制循环并更新提示文案。
- */
 function onBackgroundLoaded() {
   if (tipEl) {
-    tipEl.textContent = '按住左键拖动选择区域，松开完成截图，Esc/右键取消'
+    tipEl.textContent = '按住左键拖动选择区域，松开后点击✓确认，Esc/右键取消'
   }
+  setToolbarVisible(false)
   draw()
 }
 
-/**
- * 结束选区并将裁剪结果写入剪贴板；同时按配置决定是否落盘/打开编辑器。
- */
 function finishSelection() {
+  if (isFinishing) return
+  isFinishing = true
   if (!backgroundImage) {
     window.close()
     return
@@ -142,7 +162,12 @@ function finishSelection() {
 
   const { x, y, width, height } = getSelectionRect()
   if (width < 5 || height < 5) {
-    window.close()
+    isFinishing = false
+    isPendingConfirm = false
+    setToolbarVisible(false)
+    if (tipEl) {
+      tipEl.textContent = '按住左键拖动选择区域，松开后点击✓确认，Esc/右键取消'
+    }
     return
   }
 
@@ -172,9 +197,43 @@ let activePointerId: number | null = null
 let isGlobalPointerListening = false
 let isGlobalMouseListening = false
 
-/**
- * 兜底：在拖动期间把 mousemove/mouseup 绑定到 window，避免移出画布时丢失 mouseup。
- */
+function positionToolbarToSelection() {
+  if (!toolbarEl) return
+  const { x, y, width, height } = getSelectionRect()
+  if (width <= 0 || height <= 0) return
+
+  const canvasRect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width ? canvasRect.width / canvas.width : 1
+  const scaleY = canvas.height ? canvasRect.height / canvas.height : 1
+
+  const left = canvasRect.left + x * scaleX
+  const top = canvasRect.top + y * scaleY
+  const right = left + width * scaleX
+  const bottom = top + height * scaleY
+
+  const toolbarRect = toolbarEl.getBoundingClientRect()
+  const toolbarWidth = toolbarRect.width || 80
+  const toolbarHeight = toolbarRect.height || 36
+
+  const viewportPadding = 12
+  const offset = 8
+
+  let targetLeft = right - toolbarWidth
+  let targetTop = bottom + offset
+
+  if (targetTop + toolbarHeight > window.innerHeight - viewportPadding) {
+    targetTop = top - toolbarHeight - offset
+  }
+
+  targetLeft = Math.max(viewportPadding, Math.min(window.innerWidth - viewportPadding - toolbarWidth, targetLeft))
+  targetTop = Math.max(viewportPadding, Math.min(window.innerHeight - viewportPadding - toolbarHeight, targetTop))
+
+  toolbarEl.style.right = 'auto'
+  toolbarEl.style.bottom = 'auto'
+  toolbarEl.style.left = `${Math.round(targetLeft)}px`
+  toolbarEl.style.top = `${Math.round(targetTop)}px`
+}
+
 function attachGlobalMouseListeners() {
   if (isGlobalMouseListening) return
   isGlobalMouseListening = true
@@ -182,9 +241,6 @@ function attachGlobalMouseListeners() {
   window.addEventListener('mouseup', onMouseUp)
 }
 
-/**
- * 解除兜底的全局鼠标监听，避免退出后残留监听器。
- */
 function detachGlobalMouseListeners() {
   if (!isGlobalMouseListening) return
   isGlobalMouseListening = false
@@ -192,9 +248,6 @@ function detachGlobalMouseListeners() {
   window.removeEventListener('mouseup', onMouseUp)
 }
 
-/**
- * 兜底：在拖动期间把 move/up/cancel 同时绑定到 window，避免 setPointerCapture 失败时丢事件。
- */
 function attachGlobalPointerListeners() {
   if (isGlobalPointerListening) return
   isGlobalPointerListening = true
@@ -203,9 +256,6 @@ function attachGlobalPointerListeners() {
   window.addEventListener('pointercancel', onPointerCancel, { passive: false })
 }
 
-/**
- * 解除兜底的全局指针监听，避免退出后残留监听器。
- */
 function detachGlobalPointerListeners() {
   if (!isGlobalPointerListening) return
   isGlobalPointerListening = false
@@ -214,10 +264,6 @@ function detachGlobalPointerListeners() {
   window.removeEventListener('pointercancel', onPointerCancel)
 }
 
-/**
- * 将指针事件的 client 坐标换算为画布坐标，并夹紧到画布范围内。
- * 需要同时考虑 canvas 像素尺寸与 DOM 展示尺寸不一致（高 DPI/缩放）的问题。
- */
 function getCanvasPoint(event: { clientX: number; clientY: number }) {
   const rect = canvas.getBoundingClientRect()
   const scaleX = rect.width ? canvas.width / rect.width : 1
@@ -229,9 +275,6 @@ function getCanvasPoint(event: { clientX: number; clientY: number }) {
   return { x: clampedX, y: clampedY }
 }
 
-/**
- * mouse 兜底：开始框选（用于 Pointer Events 不可用/不触发的环境）。
- */
 function onMouseDown(event: MouseEvent) {
   console.log('触发画布 mouse 按下事件，按键：', event.button, '位置：', event.clientX, event.clientY)
   if (activeInput === 'pointer') return
@@ -242,6 +285,8 @@ function onMouseDown(event: MouseEvent) {
   if (event.button !== 0) return
 
   event.preventDefault()
+  isPendingConfirm = false
+  setToolbarVisible(false)
   activeInput = 'mouse'
   isSelecting = true
   attachGlobalMouseListeners()
@@ -253,9 +298,6 @@ function onMouseDown(event: MouseEvent) {
   currentY = startY
 }
 
-/**
- * mouse 兜底：更新框选。
- */
 function onMouseMove(event: MouseEvent) {
   console.log('触发画布 mouse 移动事件，位置：', event.clientX, event.clientY)
   if (activeInput !== 'mouse') return
@@ -265,18 +307,12 @@ function onMouseMove(event: MouseEvent) {
   currentY = p.y
 }
 
-/**
- * mouse 兜底：结束框选。
- */
 function onMouseUp(_event: MouseEvent) {
   console.log('触发画布 mouse 抬起事件，结束框选')
   if (activeInput !== 'mouse') return
   endSelection()
 }
 
-/**
- * 开始框选：记录起点并捕获指针，保证指针移出 canvas 仍能收到 up/cancel。
- */
 function onPointerDown(event: PointerEvent) {
   console.log('触发画布 pointer 按下事件，按键：', event.button, '位置：', event.clientX, event.clientY)
   if (event.button === 2) {
@@ -286,6 +322,8 @@ function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
 
   event.preventDefault()
+  isPendingConfirm = false
+  setToolbarVisible(false)
   activeInput = 'pointer'
   activePointerId = event.pointerId
   try {
@@ -301,9 +339,6 @@ function onPointerDown(event: PointerEvent) {
   currentY = startY
 }
 
-/**
- * 更新框选：根据当前指针位置更新终点坐标。
- */
 function onPointerMove(event: PointerEvent) {
   console.log('触发画布 pointer 移动事件，位置：', event.clientX, event.clientY)
   if (activeInput !== 'pointer') return
@@ -315,9 +350,6 @@ function onPointerMove(event: PointerEvent) {
   currentY = p.y
 }
 
-/**
- * 结束框选：停止框选状态并触发裁剪保存。
- */
 function endSelection() {
   if (!isSelecting) return
   isSelecting = false
@@ -325,12 +357,20 @@ function endSelection() {
   activePointerId = null
   detachGlobalPointerListeners()
   detachGlobalMouseListeners()
-  finishSelection()
+  const { width, height } = getSelectionRect()
+  if (width < 5 || height < 5) {
+    isPendingConfirm = false
+    setToolbarVisible(false)
+    if (tipEl) {
+      tipEl.textContent = '按住左键拖动选择区域，松开后点击✓确认，Esc/右键取消'
+    }
+    return
+  }
+  isPendingConfirm = true
+  setToolbarVisible(true)
+  positionToolbarToSelection()
 }
 
-/**
- * 指针抬起：释放捕获并结束框选。
- */
 function onPointerUp(event: PointerEvent) {
   console.log('触发画布 pointer 抬起事件')
   if (activeInput !== 'pointer') return
@@ -342,9 +382,6 @@ function onPointerUp(event: PointerEvent) {
   endSelection()
 }
 
-/**
- * 指针被系统取消（例如窗口失焦/触控中断）：释放捕获并退出。
- */
 function onPointerCancel(event: PointerEvent) {
   console.log('触发画布 pointer 取消事件，关闭截图窗口')
   if (activeInput !== 'pointer') return
@@ -365,9 +402,6 @@ canvas.addEventListener('pointermove', onPointerMove)
 canvas.addEventListener('pointerup', onPointerUp)
 canvas.addEventListener('pointercancel', onPointerCancel)
 
-/**
- * 键盘操作：Esc 取消截图。
- */
 function onKeyDown(event: KeyboardEvent) {
   console.log('触发键盘按下事件，按键：', event.key)
   if (event.key === 'Escape') {
@@ -376,27 +410,21 @@ function onKeyDown(event: KeyboardEvent) {
 }
 window.addEventListener('keydown', onKeyDown)
 
-/**
- * 窗口加载后主动获取焦点，便于立即响应键盘操作。
- */
 function onWindowLoad() {
   console.log('触发窗口 load 事件，窗口获取焦点')
   window.focus()
 }
 window.addEventListener('load', onWindowLoad)
 
-/**
- * 兜底 resize：窗口尺寸变化时同步画布尺寸。
- */
 function onWindowResize() {
   console.log('触发窗口 resize 事件，新尺寸：', window.innerWidth, window.innerHeight)
   setCanvasSize(window.innerWidth, window.innerHeight)
+  if (isPendingConfirm) {
+    positionToolbarToSelection()
+  }
 }
 window.addEventListener('resize', onWindowResize)
 
-/**
- * 主进程开启截图后下发屏幕背景图与显示器尺寸，用于绘制遮罩与选区。
- */
 function onCaptureSetBackground(payload: unknown) {
   console.log('收到主进程下发截图背景数据事件，payload：', payload)
   if (!payload || typeof payload !== 'object') return
@@ -405,3 +433,16 @@ function onCaptureSetBackground(payload: unknown) {
   setBackground(dataUrl, displaySize, displayScaleFactor)
 }
 window.captureApi.onSetBackground(onCaptureSetBackground)
+
+function onConfirmClick() {
+  if (!isPendingConfirm) return
+  setToolbarVisible(false)
+  finishSelection()
+}
+
+function onCancelClick() {
+  window.close()
+}
+
+confirmBtn?.addEventListener('click', onConfirmClick)
+cancelBtn?.addEventListener('click', onCancelClick)
