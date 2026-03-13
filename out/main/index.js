@@ -19,6 +19,7 @@ let mainWindow = null;
 let captureWindow = null;
 let editorWindow = null;
 let captureEscShortcutRegistered = false;
+let isQuitting = false;
 let history = [];
 let lastCaptureDataUrl = null;
 const isDev = !app.isPackaged;
@@ -121,6 +122,14 @@ function createMainWindow() {
     }
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.on("close", (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    mainWindow?.hide();
+  });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
@@ -397,6 +406,9 @@ app.whenReady().then(() => {
       createMainWindow();
     }
   });
+});
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();

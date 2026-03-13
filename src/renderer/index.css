@@ -74,6 +74,7 @@ body {
   position: relative;
   height: 100%;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .settings-title {
@@ -111,4 +112,44 @@ body {
 
 .settings-table :where(.ant-table-thead > tr > th) {
   border-bottom-color: rgba(10, 24, 40, 0.08);
+}
+
+.settings-shell__content::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.settings-shell__content::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 12px;
+}
+
+.settings-shell__content::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(35, 191, 164, 0.28) 0%,
+    rgba(59, 130, 246, 0.26) 100%
+  );
+  border: 3px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.settings-shell__content::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(35, 191, 164, 0.38) 0%,
+    rgba(59, 130, 246, 0.34) 100%
+  );
+}
+
+.settings-shell__content::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports (scrollbar-color: auto) {
+  .settings-shell__content {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(35, 191, 164, 0.42) transparent;
+  }
 }

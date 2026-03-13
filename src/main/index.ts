@@ -10,6 +10,7 @@ let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let editorWindow: BrowserWindow | null = null
 let captureEscShortcutRegistered = false
+let isQuitting = false
 
 let history: ScreenshotRecord[] = []
 let lastCaptureDataUrl: string | null = null
@@ -130,6 +131,14 @@ function createMainWindow() {
   })
 
   mainWindow.setMenuBarVisibility(false)
+  mainWindow.on('close', e => {
+    if (isQuitting) return
+    e.preventDefault()
+    mainWindow?.hide()
+  })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -463,6 +472,10 @@ app.whenReady().then(() => {
       createMainWindow()
     }
   })
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
 })
 
 app.on('will-quit', () => {
