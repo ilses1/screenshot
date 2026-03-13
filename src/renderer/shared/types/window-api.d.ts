@@ -1,4 +1,4 @@
-import type { AppConfig, ScreenshotRecord } from '../common/types'
+import type { AppConfig, ScreenshotRecord } from '../../../common/types'
 
 declare global {
   interface Window {
@@ -14,3 +14,4 @@ declare global {
 }
 
 export {}
+

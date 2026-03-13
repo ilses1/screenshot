@@ -1,12 +1,3 @@
-declare global {
-  interface Window {
-    editorApi: {
-      saveToClipboardAndPersist: (dataUrl: string) => Promise<unknown>
-      onImage: (handler: (dataUrl: string) => void) => void
-    }
-  }
-}
-
 type Tool = 'pen' | 'rect' | 'arrow' | 'text'
 
 const canvas = document.getElementById('editor-canvas') as HTMLCanvasElement
@@ -228,3 +219,6 @@ window.addEventListener('resize', () => {
   resizeCanvasToImage()
   redraw()
 })
+
+bindCanvasEvents()
+

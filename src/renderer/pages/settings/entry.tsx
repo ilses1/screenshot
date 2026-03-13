@@ -33,11 +33,11 @@ import {
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 
-import type { AppConfig, ScreenshotRecord } from "../common/types";
+import type { AppConfig, ScreenshotRecord } from "../../../common/types";
 import type { ColumnsType } from "antd/es/table";
 import "antd/dist/reset.css";
-import "./index.css";
-import appIconUrl from "./app-icon.svg?url";
+import "../../shared/styles/index.css";
+import appIconUrl from "../../shared/assets/app-icon.svg?url";
 
 type SettingsFormValues = Pick<
   AppConfig,
@@ -430,3 +430,4 @@ createRoot(container).render(
     <SettingsApp />
   </React.StrictMode>,
 );
+
