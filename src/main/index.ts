@@ -51,12 +51,22 @@ function loadConfig() {
     try {
       const parsed = JSON.parse(raw)
       config = {
-        hotkey: parsed.hotkey ?? 'F2',
+        configVersion: typeof parsed.configVersion === 'number' ? parsed.configVersion : 1,
+        hotkey: parsed.hotkey ?? 'F1',
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir:
           parsed.saveDir ??
           path.join(app.getPath('pictures'), 'ElectronScreenshot'),
         openEditorAfterCapture: parsed.openEditorAfterCapture ?? true
+      }
+
+      if ((config.configVersion ?? 1) < 2) {
+        const oldHotkey = typeof parsed.hotkey === 'string' ? parsed.hotkey : ''
+        if (!oldHotkey.trim() || oldHotkey.trim().toUpperCase() === 'F2') {
+          config.hotkey = 'F1'
+        }
+        config.configVersion = 2
+        saveConfig()
       }
       return
     } catch {
@@ -64,7 +74,8 @@ function loadConfig() {
   }
 
   config = {
-    hotkey: 'F2',
+    configVersion: 2,
+    hotkey: 'F1',
     autoSaveToFile: false,
     saveDir: path.join(app.getPath('pictures'), 'ElectronScreenshot'),
     openEditorAfterCapture: true
@@ -269,7 +280,7 @@ function createTray() {
 
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon
   tray = new Tray(trayIcon)
-  const hotkeyText = config?.hotkey || 'F2'
+  const hotkeyText = config?.hotkey || 'F1'
   tray.setToolTip(`截图助手 - 按 ${hotkeyText} 开始截图`)
   updateTrayMenu()
 }
@@ -279,7 +290,7 @@ function registerShortcuts() {
   if (!config) return
 
   if (!config.hotkey || !config.hotkey.trim()) {
-    config.hotkey = 'F2'
+    config.hotkey = 'F1'
     saveConfig()
   }
 
@@ -293,11 +304,17 @@ function registerShortcuts() {
     }
   }
 
-  let ok = globalShortcut.register(config.hotkey, handler)
-  console.log("是否注册快捷键成功", ok, config.hotkey);
+  const requestedHotkey = config.hotkey
+  let ok = globalShortcut.register(requestedHotkey, handler)
+  console.log('是否注册快捷键成功', ok, requestedHotkey)
 
   if (!ok) {
-    const fallbacks = ['Alt+Shift+A', 'CommandOrControl+Shift+A']
+    const normalized = requestedHotkey.trim()
+    const isPlainFunctionKey = /^F\d{1,2}$/i.test(normalized)
+    const functionKeyFallback = isPlainFunctionKey
+      ? [`CommandOrControl+${normalized.toUpperCase()}`]
+      : []
+    const fallbacks = [...functionKeyFallback, 'Alt+Shift+A', 'CommandOrControl+Shift+A']
     for (const key of fallbacks) {
       if (globalShortcut.register(key, handler)) {
         config.hotkey = key
@@ -309,6 +326,15 @@ function registerShortcuts() {
   }
 
   console.log('[main] registerShortcuts', config.hotkey, ok ? 'success' : 'failed')
+  if (tray) {
+    updateTrayMenu()
+  }
+  if (!ok && tray) {
+    tray.displayBalloon({
+      title: '快捷键注册失败',
+      content: `无法注册截图快捷键：${requestedHotkey}。请到设置中更换一个组合键。`
+    })
+  }
 }
 
 function registerIpcHandlers() {
@@ -442,7 +468,7 @@ app.on('will-quit', () => {
 
 function updateTrayMenu() {
   if (!tray) return
-  const hotkeyText = config?.hotkey || 'F2'
+  const hotkeyText = config?.hotkey || 'F1'
   const contextMenu = Menu.buildFromTemplate([
     {
       label: isCaptureActive() ? '结束截图' : '截图',

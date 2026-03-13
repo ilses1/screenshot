@@ -22,7 +22,7 @@ declare global {
     <section style="margin-bottom: 16px;">
       <label style="display: block; margin-bottom: 8px;">
         截图快捷键：
-        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" placeholder="例如 F2 或 Ctrl+Shift+F2" />
+        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" placeholder="例如 F1 或 Ctrl+Shift+F1" />
       </label>
     </section>
     <section style="margin-bottom: 16px;">

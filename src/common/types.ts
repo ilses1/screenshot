@@ -1,4 +1,5 @@
 export type AppConfig = {
+  configVersion?: number
   hotkey: string
   autoSaveToFile: boolean
   saveDir: string
@@ -10,4 +11,3 @@ export type ScreenshotRecord = {
   filePath: string
   createdAt: number
 }
-
