@@ -1,0 +1,114 @@
+:root {
+  --shell-bg0: #f7fbff;
+  --shell-bg1: #f6fff9;
+  --shell-panel: rgba(255, 255, 255, 0.72);
+  --shell-panel-strong: rgba(255, 255, 255, 0.92);
+  --shell-border: rgba(10, 24, 40, 0.08);
+  --shell-border-strong: rgba(10, 24, 40, 0.14);
+  --shell-text: rgba(10, 24, 40, 0.9);
+  --shell-muted: rgba(10, 24, 40, 0.62);
+  --shell-accent: #23bfa4;
+  --shell-accent-2: #3b82f6;
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--shell-text);
+  font-family:
+    Bahnschrift,
+    'Segoe UI Variable Display',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  background:
+    radial-gradient(820px 520px at 12% 12%, rgba(35, 191, 164, 0.22), transparent 60%),
+    radial-gradient(760px 520px at 92% 8%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(1000px 700px at 50% 110%, rgba(236, 72, 153, 0.08), transparent 55%),
+    linear-gradient(180deg, var(--shell-bg1) 0%, var(--shell-bg0) 100%);
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+}
+
+.settings-shell {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.settings-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(10, 24, 40, 0.028) 0,
+      rgba(10, 24, 40, 0.028) 1px,
+      transparent 1px,
+      transparent 22px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      rgba(10, 24, 40, 0.022) 0,
+      rgba(10, 24, 40, 0.022) 1px,
+      transparent 1px,
+      transparent 22px
+    );
+  opacity: 0.4;
+  mask-image: radial-gradient(70% 55% at 50% 22%, rgba(0, 0, 0, 1) 0, transparent 72%);
+}
+
+.settings-shell__content {
+  position: relative;
+  height: 100%;
+  overflow: auto;
+}
+
+.settings-title {
+  letter-spacing: 0.2px;
+  margin: 0;
+}
+
+.settings-subtitle {
+  margin-top: 6px;
+  color: var(--shell-muted);
+}
+
+.settings-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 10px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--shell-border);
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(10, 24, 40, 0.72);
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.settings-card {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.settings-table :where(.ant-table-tbody > tr > td) {
+  border-bottom-color: rgba(10, 24, 40, 0.06);
+}
+
+.settings-table :where(.ant-table-thead > tr > th) {
+  border-bottom-color: rgba(10, 24, 40, 0.08);
+}
