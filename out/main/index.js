@@ -427,11 +427,12 @@ function createCaptureWindow() {
   captureWindows = [];
   inputWindow = null;
   for (const display of displays) {
+    const expectedBounds = { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height };
     const win = new BrowserWindow({
-      x: display.bounds.x,
-      y: display.bounds.y,
-      width: display.bounds.width,
-      height: display.bounds.height,
+      x: expectedBounds.x,
+      y: expectedBounds.y,
+      width: expectedBounds.width,
+      height: expectedBounds.height,
       frame: false,
       transparent: true,
       resizable: false,
@@ -439,6 +440,8 @@ function createCaptureWindow() {
       focusable: false,
       alwaysOnTop: true,
       skipTaskbar: true,
+      useContentSize: true,
+      enableLargerThanScreen: true,
       show: false,
       backgroundColor: "#00000000",
       webPreferences: {
@@ -450,6 +453,7 @@ function createCaptureWindow() {
     win.__captureRole = "mask";
     win.setMenuBarVisibility(false);
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, "screen-saver");
     captureWindows.push(win);
     win.on("close", (e) => {
       if (isClosingCaptureWindows) return;
@@ -492,12 +496,20 @@ function createCaptureWindow() {
         win.webContents.send(IPC_CHANNELS.CAPTURE_MASK_INIT, {
           sessionId: session,
           displayId: display.id,
-          displayBounds: { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height },
+          displayBounds: expectedBounds,
           maskAlpha
         });
       } catch {
       }
       win.showInactive();
+      try {
+        const actual = win.getBounds();
+        if (actual.x !== expectedBounds.x || actual.y !== expectedBounds.y || actual.width !== expectedBounds.width || actual.height !== expectedBounds.height) {
+          console.warn("[main] mask bounds mismatch", { displayId: display.id, expectedBounds, actual, scaleFactor: display.scaleFactor });
+          win.setBounds(expectedBounds, false);
+        }
+      } catch {
+      }
       updateMaskMouseBehavior();
       broadcastCaptureSessionState();
     });
@@ -603,11 +615,12 @@ function enterSelectingMode() {
   if (!vb) return;
   transitionCaptureState("selecting");
   registerCaptureEnterShortcut();
+  const expectedBounds = { x: vb.x, y: vb.y, width: vb.width, height: vb.height };
   const win = new BrowserWindow({
-    x: vb.x,
-    y: vb.y,
-    width: vb.width,
-    height: vb.height,
+    x: expectedBounds.x,
+    y: expectedBounds.y,
+    width: expectedBounds.width,
+    height: expectedBounds.height,
     frame: false,
     transparent: true,
     resizable: false,
@@ -615,6 +628,8 @@ function enterSelectingMode() {
     focusable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    useContentSize: true,
+    enableLargerThanScreen: true,
     show: false,
     backgroundColor: "#00000000",
     webPreferences: {
@@ -627,6 +642,7 @@ function enterSelectingMode() {
   inputWindow = win;
   win.setMenuBarVisibility(false);
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setAlwaysOnTop(true, "screen-saver");
   captureWindows.push(win);
   updateMaskMouseBehavior();
   win.on("close", (e) => {
@@ -673,6 +689,14 @@ function enterSelectingMode() {
       }
     }
     win.showInactive();
+    try {
+      const actual = win.getBounds();
+      if (actual.x !== expectedBounds.x || actual.y !== expectedBounds.y || actual.width !== expectedBounds.width || actual.height !== expectedBounds.height) {
+        console.warn("[main] input bounds mismatch", { expectedBounds, actual });
+        win.setBounds(expectedBounds, false);
+      }
+    } catch {
+    }
     updateMaskMouseBehavior();
     broadcastCaptureSessionState();
   });
