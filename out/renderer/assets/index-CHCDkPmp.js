@@ -5,8 +5,8 @@ function renderSettingsUI() {
     <h1 style="font-size: 24px; margin-bottom: 16px;">截图工具设置</h1>
     <section style="margin-bottom: 16px;">
       <label style="display: block; margin-bottom: 8px;">
-        截图快捷键：
-        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" placeholder="例如 F1 或 Ctrl+Shift+F1" />
+        截图快捷键（固定）：
+        <input id="hotkey-input" style="margin-left: 8px; padding: 4px 8px; width: 160px;" value="F1" disabled />
       </label>
     </section>
     <section style="margin-bottom: 16px;">
@@ -92,7 +92,7 @@ const {
 async function loadSettings() {
   try {
     const settings = await window.api.getSettings();
-    hotkeyInput.value = settings.hotkey;
+    hotkeyInput.value = "F1";
     autoSaveInput.checked = settings.autoSaveToFile;
     saveDirInput.value = settings.saveDir;
     openEditorInput.checked = settings.openEditorAfterCapture;
@@ -104,7 +104,6 @@ async function loadSettings() {
 async function saveSettings() {
   try {
     const patch = {
-      hotkey: hotkeyInput.value.trim(),
       autoSaveToFile: autoSaveInput.checked,
       saveDir: saveDirInput.value.trim(),
       openEditorAfterCapture: openEditorInput.checked
@@ -114,7 +113,7 @@ async function saveSettings() {
     setTimeout(() => {
       statusText.textContent = "";
     }, 1500);
-    hotkeyInput.value = updated.hotkey;
+    hotkeyInput.value = "F1";
     saveDirInput.value = updated.saveDir;
   } catch (error) {
     statusText.textContent = "保存失败";

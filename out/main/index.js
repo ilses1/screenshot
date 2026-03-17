@@ -16,22 +16,44 @@ const IPC_CHANNELS = {
 };
 let tray = null;
 let mainWindow = null;
-let captureWindow = null;
+let captureWindows = [];
 let editorWindow = null;
 let captureEscShortcutRegistered = false;
 let isQuitting = false;
+let isClosingCaptureWindows = false;
+let isCaptureStarting = false;
+let captureSessionId = 0;
 let history = [];
 let lastCaptureDataUrl = null;
 const isDev = !app.isPackaged;
 let config;
 function isCaptureActive() {
-  return !!captureWindow;
+  return isCaptureStarting || captureWindows.length > 0;
+}
+function parseScreenNumber(name) {
+  const m = name.match(/(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+function pickScreenSourceForDisplay(sources, targetDisplay, displays) {
+  const displayId = String(targetDisplay.id);
+  const byDisplayId = sources.find((s) => String(s.display_id ?? "") === displayId);
+  if (byDisplayId) return byDisplayId;
+  const sortedDisplays = [...displays].sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+  const targetIndex = sortedDisplays.findIndex((d) => d.id === targetDisplay.id);
+  const numberedSources = sources.map((s) => ({ s, n: parseScreenNumber(s.name) })).filter((x) => typeof x.n === "number").sort((a, b) => a.n - b.n);
+  if (targetIndex >= 0 && targetIndex < numberedSources.length) {
+    return numberedSources[targetIndex].s;
+  }
+  if (sources.length === 1) return sources[0];
+  return null;
 }
 function registerCaptureEscShortcut() {
   if (captureEscShortcutRegistered) return;
   const ok = globalShortcut.register("Esc", () => {
     if (isCaptureActive()) {
-      captureWindow?.close();
+      closeAllCaptureWindows();
     }
   });
   if (ok) {
@@ -43,6 +65,27 @@ function unregisterCaptureEscShortcut() {
   globalShortcut.unregister("Esc");
   captureEscShortcutRegistered = false;
 }
+function closeAllCaptureWindows() {
+  captureSessionId++;
+  isCaptureStarting = false;
+  if (captureWindows.length <= 0) {
+    unregisterCaptureEscShortcut();
+    if (tray) {
+      updateTrayMenu();
+    }
+    return;
+  }
+  if (isClosingCaptureWindows) return;
+  isClosingCaptureWindows = true;
+  for (const win of captureWindows) {
+    try {
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+    } catch {
+    }
+  }
+}
 function getConfigPath() {
   const userData = app.getPath("userData");
   return path.join(userData, "config.json");
@@ -53,19 +96,18 @@ function loadConfig() {
     const raw = fs.readFileSync(configPath, "utf-8");
     try {
       const parsed = JSON.parse(raw);
+      const previousHotkey = typeof parsed.hotkey === "string" ? parsed.hotkey : "";
       config = {
         configVersion: typeof parsed.configVersion === "number" ? parsed.configVersion : 1,
-        hotkey: parsed.hotkey ?? "F1",
+        hotkey: "F1",
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir: parsed.saveDir ?? path.join(app.getPath("pictures"), "ElectronScreenshot"),
         openEditorAfterCapture: parsed.openEditorAfterCapture ?? true
       };
       if ((config.configVersion ?? 1) < 2) {
-        const oldHotkey = typeof parsed.hotkey === "string" ? parsed.hotkey : "";
-        if (!oldHotkey.trim() || oldHotkey.trim().toUpperCase() === "F2") {
-          config.hotkey = "F1";
-        }
         config.configVersion = 2;
+        saveConfig();
+      } else if (previousHotkey.trim() !== "F1") {
         saveConfig();
       }
       return;
@@ -140,90 +182,136 @@ function createMainWindow() {
   });
 }
 function createCaptureWindow() {
-  if (captureWindow) {
+  if (isCaptureActive()) {
     console.log("[main] captureWindow already exists");
     return;
   }
-  const cursorPoint = screen.getCursorScreenPoint();
-  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint);
-  console.log("[main] creating captureWindow");
-  captureWindow = new BrowserWindow({
-    x: targetDisplay.bounds.x,
-    y: targetDisplay.bounds.y,
-    width: targetDisplay.bounds.width,
-    height: targetDisplay.bounds.height,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    show: false,
-    backgroundColor: "#00000000",
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-  captureWindow.setMenuBarVisibility(false);
-  if (isDev) {
-    captureWindow.loadURL("http://localhost:5173/capture.html");
-  } else {
-    captureWindow.loadFile(path.join(__dirname, "../renderer/capture.html"));
+  const displays = screen.getAllDisplays();
+  if (displays.length <= 0) {
+    console.error("[main] no displays found");
+    return;
   }
-  captureWindow.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
-    console.error("[main] captureWindow did-fail-load", errorCode, errorDescription);
-  });
-  captureWindow.webContents.once("did-finish-load", async () => {
-    console.log("[main] captureWindow did-finish-load");
-    if (isDev) {
-      captureWindow?.webContents.openDevTools({ mode: "detach" });
-      captureWindow?.setAlwaysOnTop(false);
-    }
+  const session = ++captureSessionId;
+  isCaptureStarting = true;
+  registerCaptureEscShortcut();
+  if (tray) {
+    updateTrayMenu();
+  }
+  void (async () => {
+    console.log("[main] creating captureWindow(s)");
+    let payloadByDisplayId = /* @__PURE__ */ new Map();
     try {
-      const thumbnailSize = {
-        width: Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor),
-        height: Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor)
-      };
-      const sources = await desktopCapturer.getSources({
-        types: ["screen"],
-        thumbnailSize
-      });
-      const displayId = String(targetDisplay.id);
-      const source = sources.find((s) => s.display_id === displayId) ?? sources[0];
-      if (!source) {
-        throw new Error("no screen sources");
+      for (const display of displays) {
+        if (session !== captureSessionId) {
+          return;
+        }
+        const thumbnailSize = {
+          width: Math.round(display.bounds.width * display.scaleFactor),
+          height: Math.round(display.bounds.height * display.scaleFactor)
+        };
+        const sources = await desktopCapturer.getSources({
+          types: ["screen"],
+          thumbnailSize
+        });
+        if (session !== captureSessionId) {
+          return;
+        }
+        const source = pickScreenSourceForDisplay(sources, display, displays);
+        if (!source) {
+          throw new Error(`cannot map screen source displayId=${display.id}`);
+        }
+        const image = source.thumbnail;
+        if (image.isEmpty()) {
+          throw new Error(`empty thumbnail displayId=${display.id}`);
+        }
+        payloadByDisplayId.set(display.id, {
+          dataUrl: image.toDataURL(),
+          displaySize: { width: display.bounds.width, height: display.bounds.height },
+          scaleFactor: display.scaleFactor
+        });
       }
-      const image = source.thumbnail;
-      if (image.isEmpty()) {
-        throw new Error("empty thumbnail");
-      }
-      captureWindow?.webContents.send("capture:set-background", {
-        dataUrl: image.toDataURL(),
-        displaySize: { width: targetDisplay.bounds.width, height: targetDisplay.bounds.height },
-        scaleFactor: targetDisplay.scaleFactor
-      });
-      captureWindow?.show();
-      captureWindow?.focus();
-      registerCaptureEscShortcut();
     } catch (error) {
       console.error("[main] captureWindow capture error", error);
-      captureWindow?.close();
+      closeAllCaptureWindows();
+      unregisterCaptureEscShortcut();
       return;
     }
+    if (session !== captureSessionId) {
+      return;
+    }
+    const primaryDisplay = screen.getPrimaryDisplay();
+    isClosingCaptureWindows = false;
+    captureWindows = [];
+    isCaptureStarting = false;
+    for (const display of displays) {
+      const payload = payloadByDisplayId.get(display.id);
+      if (!payload) continue;
+      const win = new BrowserWindow({
+        x: display.bounds.x,
+        y: display.bounds.y,
+        width: display.bounds.width,
+        height: display.bounds.height,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        show: false,
+        backgroundColor: "#00000000",
+        webPreferences: {
+          preload: path.join(__dirname, "../preload/index.cjs"),
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      });
+      win.setMenuBarVisibility(false);
+      captureWindows.push(win);
+      win.on("close", (e) => {
+        if (isClosingCaptureWindows) return;
+        e.preventDefault();
+        closeAllCaptureWindows();
+      });
+      win.on("closed", () => {
+        captureWindows = captureWindows.filter((w) => w !== win);
+        if (captureWindows.length <= 0) {
+          console.log("[main] captureWindow(s) closed");
+          isClosingCaptureWindows = false;
+          isCaptureStarting = false;
+          unregisterCaptureEscShortcut();
+          if (tray) {
+            updateTrayMenu();
+          }
+        }
+      });
+      win.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
+        console.error("[main] captureWindow did-fail-load", errorCode, errorDescription);
+        closeAllCaptureWindows();
+      });
+      win.webContents.once("did-finish-load", () => {
+        if (isDev) {
+          win.webContents.openDevTools({ mode: "detach" });
+          win.setAlwaysOnTop(false);
+        }
+        win.webContents.send("capture:set-background", {
+          mode: "single",
+          ...payload
+        });
+        win.show();
+        if (display.id === primaryDisplay.id) {
+          win.focus();
+        }
+      });
+      if (isDev) {
+        win.loadURL("http://localhost:5173/capture.html");
+      } else {
+        win.loadFile(path.join(__dirname, "../renderer/capture.html"));
+      }
+    }
     if (tray) {
       updateTrayMenu();
     }
-  });
-  captureWindow.on("closed", () => {
-    console.log("[main] captureWindow closed");
-    captureWindow = null;
-    unregisterCaptureEscShortcut();
-    if (tray) {
-      updateTrayMenu();
-    }
-  });
+  })();
 }
 function createEditorWindow() {
   if (editorWindow) {
@@ -256,42 +344,28 @@ function createTray() {
   const icon = nativeImage.createFromPath(iconPath);
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon;
   tray = new Tray(trayIcon);
-  const hotkeyText = config?.hotkey || "F1";
+  const hotkeyText = "F1";
   tray.setToolTip(`截图助手 - 按 ${hotkeyText} 开始截图`);
   updateTrayMenu();
 }
 function registerShortcuts() {
   globalShortcut.unregisterAll();
   if (!config) return;
-  if (!config.hotkey || !config.hotkey.trim()) {
+  if (config.hotkey !== "F1") {
     config.hotkey = "F1";
     saveConfig();
   }
   const handler = () => {
     console.log("[main] global shortcut triggered", config.hotkey);
     if (isCaptureActive()) {
-      captureWindow?.close();
+      closeAllCaptureWindows();
     } else {
       createCaptureWindow();
     }
   };
-  const requestedHotkey = config.hotkey;
+  const requestedHotkey = "F1";
   let ok = globalShortcut.register(requestedHotkey, handler);
   console.log("是否注册快捷键成功", ok, requestedHotkey);
-  if (!ok) {
-    const normalized = requestedHotkey.trim();
-    const isPlainFunctionKey = /^F\d{1,2}$/i.test(normalized);
-    const functionKeyFallback = isPlainFunctionKey ? [`CommandOrControl+${normalized.toUpperCase()}`] : [];
-    const fallbacks = [...functionKeyFallback, "Alt+Shift+A", "CommandOrControl+Shift+A"];
-    for (const key of fallbacks) {
-      if (globalShortcut.register(key, handler)) {
-        config.hotkey = key;
-        saveConfig();
-        ok = true;
-        break;
-      }
-    }
-  }
   console.log("[main] registerShortcuts", config.hotkey, ok ? "success" : "failed");
   if (tray) {
     updateTrayMenu();
@@ -299,7 +373,7 @@ function registerShortcuts() {
   if (!ok && tray) {
     tray.displayBalloon({
       title: "快捷键注册失败",
-      content: `无法注册截图快捷键：${requestedHotkey}。请到设置中更换一个组合键。`
+      content: `无法注册截图快捷键：${requestedHotkey}。请检查系统是否占用该按键，或以管理员权限运行。`
     });
   }
 }
@@ -308,7 +382,8 @@ function registerIpcHandlers() {
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch) => {
-    config = { ...config, ...patch };
+    const { hotkey: _hotkey, ...rest } = patch;
+    config = { ...config, ...rest, hotkey: "F1" };
     saveConfig();
     registerShortcuts();
     return config;
@@ -415,14 +490,14 @@ app.on("will-quit", () => {
 });
 function updateTrayMenu() {
   if (!tray) return;
-  const hotkeyText = config?.hotkey || "F1";
+  const hotkeyText = "F1";
   const contextMenu = Menu.buildFromTemplate([
     {
       label: isCaptureActive() ? "结束截图" : "截图",
       click: () => {
         if (isCaptureActive()) {
           console.log("[main] tray menu click: stop capture");
-          captureWindow?.close();
+          closeAllCaptureWindows();
         } else {
           console.log("[main] tray menu click: screenshot");
           createCaptureWindow();

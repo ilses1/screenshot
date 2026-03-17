@@ -41,7 +41,7 @@ import appIconUrl from "../../shared/assets/app-icon.svg?url";
 
 type SettingsFormValues = Pick<
   AppConfig,
-  "hotkey" | "autoSaveToFile" | "saveDir" | "openEditorAfterCapture"
+  "autoSaveToFile" | "saveDir" | "openEditorAfterCapture"
 >;
 
 function SettingsApp() {
@@ -62,7 +62,6 @@ function SettingsApp() {
     try {
       const settings = await window.api.getSettings();
       form.setFieldsValue({
-        hotkey: settings.hotkey,
         autoSaveToFile: settings.autoSaveToFile,
         saveDir: settings.saveDir,
         openEditorAfterCapture: settings.openEditorAfterCapture,
@@ -81,14 +80,12 @@ function SettingsApp() {
       setSettingsSaving(true);
 
       const patch: Partial<AppConfig> = {
-        hotkey: values.hotkey.trim(),
         autoSaveToFile: values.autoSaveToFile,
         saveDir: values.saveDir.trim(),
         openEditorAfterCapture: values.openEditorAfterCapture,
       };
       const updated = await window.api.updateSettings(patch);
       form.setFieldsValue({
-        hotkey: updated.hotkey,
         saveDir: updated.saveDir,
       });
       message.success("设置已保存");
@@ -246,7 +243,7 @@ function SettingsApp() {
                 </Typography.Title>
               </Space>
               <Typography.Paragraph className="settings-subtitle">
-                管理快捷键、保存策略与编辑器行为。历史记录支持复制路径与快速贴图。
+                截图快捷键固定为 F1。管理保存策略与编辑器行为，历史记录支持复制路径与快速贴图。
               </Typography.Paragraph>
 
               <Row gutter={[16, 16]}>
@@ -267,7 +264,6 @@ function SettingsApp() {
                       layout="vertical"
                       disabled={settingsLoading || settingsSaving}
                       initialValues={{
-                        hotkey: "",
                         autoSaveToFile: false,
                         saveDir: "",
                         openEditorAfterCapture: false,
@@ -277,14 +273,11 @@ function SettingsApp() {
                         <Col span={screens.lg ? 12 : 24}>
                           <Form.Item
                             label="截图快捷键"
-                            name="hotkey"
-                            rules={[
-                              { required: true, message: "请输入截图快捷键" },
-                            ]}
                           >
                             <Input
-                              placeholder="例如 F1 或 Ctrl+Shift+F1"
+                              value="F1"
                               autoComplete="off"
+                              disabled
                             />
                           </Form.Item>
                         </Col>
@@ -430,4 +423,3 @@ createRoot(container).render(
     <SettingsApp />
   </React.StrictMode>,
 );
-

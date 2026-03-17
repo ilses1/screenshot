@@ -7,6 +7,15 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
+function loadImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('load image failed'))
+    img.src = dataUrl
+  })
+}
+
 function roundRectSize(width: number, height: number) {
   return { w: Math.max(1, Math.round(width)), h: Math.max(1, Math.round(height)) }
 }
@@ -17,6 +26,7 @@ export function CaptureApp() {
 
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
   const scaleFactorRef = useRef(1)
+  const lastBackgroundSeqRef = useRef(0)
 
   const isSelectingRef = useRef(false)
   const isPendingConfirmRef = useRef(false)
@@ -293,6 +303,7 @@ export function CaptureApp() {
         positionToolbarToSelection()
       }
     }
+    onResize()
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('resize', onResize)
     return () => {
@@ -302,8 +313,77 @@ export function CaptureApp() {
   }, [positionToolbarToSelection, setCanvasSize])
 
   useEffect(() => {
-    window.captureApi.onSetBackground(payload => {
+    const applyPayload = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
+      const mode = (payload as any).mode
+
+      if (mode === 'multi') {
+        const { virtualBounds, compositeScaleFactor, screens } = payload as any
+        if (!virtualBounds || !screens || !Array.isArray(screens)) return
+
+        const vb =
+          virtualBounds &&
+          typeof virtualBounds.x === 'number' &&
+          typeof virtualBounds.y === 'number' &&
+          typeof virtualBounds.width === 'number' &&
+          typeof virtualBounds.height === 'number'
+            ? (virtualBounds as { x: number; y: number; width: number; height: number })
+            : null
+        if (!vb) return
+
+        const sf =
+          typeof compositeScaleFactor === 'number' && Number.isFinite(compositeScaleFactor) && compositeScaleFactor > 0
+            ? compositeScaleFactor
+            : 1
+        scaleFactorRef.current = sf
+
+        setCanvasSize(vb.width, vb.height)
+
+        void (async () => {
+          try {
+            const offscreen = document.createElement('canvas')
+            const pixelWidth = Math.max(1, Math.round(vb.width * sf))
+            const pixelHeight = Math.max(1, Math.round(vb.height * sf))
+            offscreen.width = pixelWidth
+            offscreen.height = pixelHeight
+            const octx = offscreen.getContext('2d')
+            if (!octx) return
+
+            for (const s of screens) {
+              const dataUrl = s?.dataUrl
+              if (typeof dataUrl !== 'string' || !dataUrl) continue
+
+              const b = s?.bounds
+              if (
+                !b ||
+                typeof b.x !== 'number' ||
+                typeof b.y !== 'number' ||
+                typeof b.width !== 'number' ||
+                typeof b.height !== 'number'
+              ) {
+                continue
+              }
+              const img = await loadImage(dataUrl)
+              const dx = Math.round((b.x - vb.x) * sf)
+              const dy = Math.round((b.y - vb.y) * sf)
+              const dw = Math.round(b.width * sf)
+              const dh = Math.round(b.height * sf)
+              octx.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh)
+            }
+
+            const compositeDataUrl = offscreen.toDataURL('image/png')
+            const compositeImg = await loadImage(compositeDataUrl)
+            backgroundImageRef.current = compositeImg
+            isPendingConfirmRef.current = false
+            setToolbarVisible(false)
+            resetTip()
+          } catch {
+          }
+        })()
+
+        return
+      }
+
       const { dataUrl, displaySize, scaleFactor } = payload as any
       if (typeof dataUrl !== 'string' || !displaySize) return
 
@@ -329,7 +409,32 @@ export function CaptureApp() {
         setToolbarVisible(false)
         resetTip()
       }
-    })
+    }
+
+    const syncFromBufferedPayload = () => {
+      const seq = typeof (window as any).__captureBgSeq === 'number' ? ((window as any).__captureBgSeq as number) : 0
+      const payload = (window as any).__captureBgPayload as unknown
+      if (seq > lastBackgroundSeqRef.current) {
+        lastBackgroundSeqRef.current = seq
+        applyPayload(payload)
+      }
+    }
+
+    const onBufferedEvent = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { seq?: number; payload?: unknown } | undefined
+      const seq = typeof detail?.seq === 'number' ? detail.seq : 0
+      if (seq <= lastBackgroundSeqRef.current) return
+      lastBackgroundSeqRef.current = seq
+      applyPayload(detail?.payload)
+    }
+
+    syncFromBufferedPayload()
+    window.addEventListener('capture:set-background', onBufferedEvent as EventListener)
+    syncFromBufferedPayload()
+
+    return () => {
+      window.removeEventListener('capture:set-background', onBufferedEvent as EventListener)
+    }
   }, [resetTip, setCanvasSize])
 
   const tipStyle = useMemo<React.CSSProperties>(() => {
@@ -398,4 +503,3 @@ export function CaptureApp() {
     </>
   )
 }
-

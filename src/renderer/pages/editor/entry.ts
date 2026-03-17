@@ -3,7 +3,7 @@ type Tool = 'pen' | 'rect' | 'arrow' | 'text'
 const canvas = document.getElementById('editor-canvas') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
 
-const toolbar = document.getElementById('toolbar')!
+const toolbarEl = document.getElementById('toolbar') as HTMLElement
 const undoButton = document.getElementById('undo-button') as HTMLButtonElement
 const finishButton = document.getElementById('finish-button') as HTMLButtonElement
 const ocrButton = document.getElementById('ocr-button') as HTMLButtonElement
@@ -178,9 +178,9 @@ function bindCanvasEvents() {
   canvas.addEventListener('mouseleave', onCanvasMouseUp)
 }
 
-toolbar.addEventListener('click', event => {
-  const target = event.target as HTMLElement
-  const value = target.getAttribute('data-tool') as Tool | null
+toolbarEl?.addEventListener('click', (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  const value = target?.getAttribute('data-tool') as Tool | null
   if (!value) return
   tool = value
 })
@@ -221,4 +221,3 @@ window.addEventListener('resize', () => {
 })
 
 bindCanvasEvents()
-
