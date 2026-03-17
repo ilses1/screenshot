@@ -4,6 +4,7 @@ export type AppConfig = {
   autoSaveToFile: boolean
   saveDir: string
   openEditorAfterCapture: boolean
+  maskAlpha: number
 }
 
 export type ScreenshotRecord = {

@@ -1,28 +1,25 @@
-declare global {
-  type CaptureBounds = { x: number; y: number; width: number; height: number }
+import type {
+  CaptureCloseRequest,
+  CaptureMaskInitPayload,
+  CaptureSelectionUpdate,
+  CaptureSessionReport,
+  CaptureSessionSnapshot,
+  CaptureSetBackgroundPayload as _CaptureSetBackgroundPayload
+} from '../../../common/capture'
 
-  type CaptureSetBackgroundPayload =
-    | {
-        mode?: 'single'
-        dataUrl: string
-        displaySize: { width: number; height: number }
-        scaleFactor: number
-      }
-    | {
-        mode: 'multi'
-        virtualBounds: CaptureBounds
-        compositeScaleFactor: number
-        screens: Array<{
-          displayId: number
-          bounds: CaptureBounds
-          scaleFactor: number
-          dataUrl: string
-        }>
-      }
+declare global {
+  type CaptureSetBackgroundPayload = _CaptureSetBackgroundPayload
 
   interface Window {
     captureApi: {
       onSetBackground: (handler: (payload: CaptureSetBackgroundPayload) => void) => void
+      onSessionState: (handler: (snapshot: CaptureSessionSnapshot) => void) => void
+      reportSessionState: (report: CaptureSessionReport) => void
+      onMaskInit: (handler: (payload: CaptureMaskInitPayload) => void) => void
+      sendSelectionRect: (payload: CaptureSelectionUpdate) => void
+      onSelectionRect: (handler: (payload: CaptureSelectionUpdate) => void) => void
+      onConfirmRequest: (handler: (payload: { sessionId: number }) => void) => void
+      requestClose: (payload: CaptureCloseRequest) => void
       saveImageToClipboard: (dataUrl: string) => void
       saveImage: (dataUrl: string) => Promise<unknown>
     }

@@ -19,6 +19,7 @@ import {
   Layout,
   Popconfirm,
   Row,
+  Slider,
   Space,
   Table,
   Typography,
@@ -41,7 +42,7 @@ import appIconUrl from "../../shared/assets/app-icon.svg?url";
 
 type SettingsFormValues = Pick<
   AppConfig,
-  "autoSaveToFile" | "saveDir" | "openEditorAfterCapture"
+  "autoSaveToFile" | "saveDir" | "openEditorAfterCapture" | "maskAlpha"
 >;
 
 function SettingsApp() {
@@ -56,6 +57,7 @@ function SettingsApp() {
   const [history, setHistory] = useState<ScreenshotRecord[]>([]);
   const [historyUpdatedAt, setHistoryUpdatedAt] = useState<number | null>(null);
   const autoSaveToFile = Form.useWatch("autoSaveToFile", form);
+  const maskAlpha = Form.useWatch("maskAlpha", form);
 
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true);
@@ -65,6 +67,7 @@ function SettingsApp() {
         autoSaveToFile: settings.autoSaveToFile,
         saveDir: settings.saveDir,
         openEditorAfterCapture: settings.openEditorAfterCapture,
+        maskAlpha: settings.maskAlpha,
       });
     } catch (error) {
       message.error("加载设置失败");
@@ -83,10 +86,12 @@ function SettingsApp() {
         autoSaveToFile: values.autoSaveToFile,
         saveDir: values.saveDir.trim(),
         openEditorAfterCapture: values.openEditorAfterCapture,
+        maskAlpha: values.maskAlpha,
       };
       const updated = await window.api.updateSettings(patch);
       form.setFieldsValue({
         saveDir: updated.saveDir,
+        maskAlpha: updated.maskAlpha,
       });
       message.success("设置已保存");
     } catch (error) {
@@ -267,6 +272,7 @@ function SettingsApp() {
                         autoSaveToFile: false,
                         saveDir: "",
                         openEditorAfterCapture: false,
+                        maskAlpha: 0.7,
                       }}
                     >
                       <Row gutter={12}>
@@ -297,6 +303,14 @@ function SettingsApp() {
                         size={6}
                         style={{ width: "100%" }}
                       >
+                        <Form.Item label="遮罩透明度" name="maskAlpha" style={{ marginBottom: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <Slider min={0.6} max={0.8} step={0.01} style={{ flex: 1 }} />
+                            <Typography.Text style={{ minWidth: 56, textAlign: "right" }}>
+                              {(typeof maskAlpha === "number" ? maskAlpha : 0.7).toFixed(2)}
+                            </Typography.Text>
+                          </div>
+                        </Form.Item>
                         <Form.Item
                           name="autoSaveToFile"
                           valuePropName="checked"

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, nativeImage, Tray, ipcMain, clipboard, desktopCapturer, Menu, screen } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, ipcMain, clipboard, desktopCapturer, Menu, screen, systemPreferences } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -10,25 +10,155 @@ const IPC_CHANNELS = {
   SETTINGS_GET: "settings:get",
   SETTINGS_UPDATE: "settings:update",
   CAPTURE_SAVE_IMAGE: "capture:save-image",
+  CAPTURE_SESSION_STATE: "capture:session-state",
+  CAPTURE_SESSION_REPORT: "capture:session-report",
+  CAPTURE_MASK_INIT: "capture:mask-init",
+  CAPTURE_SELECTION_UPDATE: "capture:selection-update",
+  CAPTURE_SELECTION_BROADCAST: "capture:selection-broadcast",
+  CAPTURE_CONFIRM_REQUEST: "capture:confirm-request",
+  CAPTURE_ERROR: "capture:error",
+  CAPTURE_CLOSE: "capture:close",
   HISTORY_LIST: "history:list",
   HISTORY_CLEAR: "history:clear",
   PIN_LAST: "pin:last"
 };
+const CAPTURE_ERROR_CODES = {
+  ALREADY_ACTIVE: "CAPTURE_ALREADY_ACTIVE",
+  NO_DISPLAYS: "CAPTURE_NO_DISPLAYS",
+  MACOS_SCREEN_PERMISSION: "CAPTURE_MACOS_SCREEN_PERMISSION",
+  LINUX_WAYLAND_LIMITATION: "CAPTURE_LINUX_WAYLAND_LIMITATION",
+  DESKTOP_CAPTURER_FAILED: "CAPTURE_DESKTOP_CAPTURER_FAILED",
+  SOURCES_EMPTY: "CAPTURE_SOURCES_EMPTY",
+  SOURCE_MAP_FAILED: "CAPTURE_SOURCE_MAP_FAILED",
+  THUMBNAIL_EMPTY: "CAPTURE_THUMBNAIL_EMPTY",
+  WINDOW_LOAD_FAILED: "CAPTURE_WINDOW_LOAD_FAILED",
+  UNKNOWN: "CAPTURE_UNKNOWN"
+};
+function clampNumber(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+function clampMaskAlpha(raw, fallback = 0.7) {
+  const n = typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
+  return clampNumber(n, 0.6, 0.8);
+}
+function getVirtualBounds(displays) {
+  if (displays.length <= 0) return { x: 0, y: 0, width: 0, height: 0 };
+  const first = displays[0].bounds;
+  return displays.reduce(
+    (acc, d) => {
+      const b = d.bounds;
+      const x1 = Math.min(acc.x, b.x);
+      const y1 = Math.min(acc.y, b.y);
+      const x2 = Math.max(acc.x + acc.width, b.x + b.width);
+      const y2 = Math.max(acc.y + acc.height, b.y + b.height);
+      return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+    },
+    { x: first.x, y: first.y, width: first.width, height: first.height }
+  );
+}
+function computeCompositeScaleFactor(displays) {
+  const factors = displays.map((d) => d.scaleFactor).filter((n) => Number.isFinite(n));
+  return Math.max(1, ...factors);
+}
+function composeMultiCaptureBackgroundPayload(params) {
+  const { sessionId, displays, screens } = params;
+  return {
+    mode: "multi",
+    sessionId,
+    virtualBounds: getVirtualBounds(displays),
+    compositeScaleFactor: computeCompositeScaleFactor(displays),
+    screens,
+    displays
+  };
+}
+const CAPTURE_STATE_ALLOWED = {
+  idle: /* @__PURE__ */ new Set(["masked"]),
+  masked: /* @__PURE__ */ new Set(["selecting", "finishing", "canceled", "idle"]),
+  selecting: /* @__PURE__ */ new Set(["masked", "finishing", "canceled"]),
+  finishing: /* @__PURE__ */ new Set(["idle"]),
+  canceled: /* @__PURE__ */ new Set(["idle"])
+};
+function isCaptureStateTransitionAllowed(from, to) {
+  if (from === to) return true;
+  return Boolean(CAPTURE_STATE_ALLOWED[from]?.has(to));
+}
 let tray = null;
 let mainWindow = null;
 let captureWindows = [];
+let inputWindow = null;
 let editorWindow = null;
 let captureEscShortcutRegistered = false;
+let captureEnterShortcutRegistered = false;
 let isQuitting = false;
 let isClosingCaptureWindows = false;
 let isCaptureStarting = false;
-let captureSessionId = 0;
+let captureEpoch = 0;
+let captureRunId = 0;
+let activeCaptureRunId = null;
+let captureState = "idle";
+let captureBackgroundPayload = null;
+let captureVirtualBounds = null;
 let history = [];
 let lastCaptureDataUrl = null;
 const isDev = !app.isPackaged;
 let config;
 function isCaptureActive() {
-  return isCaptureStarting || captureWindows.length > 0;
+  return isCaptureStarting || captureWindows.length > 0 || activeCaptureRunId !== null;
+}
+function emitCaptureError(payload) {
+  const full = { ...payload, platform: process.platform };
+  console.error("[capture:error]", JSON.stringify(full));
+}
+function snapshotCaptureSession() {
+  return {
+    sessionId: activeCaptureRunId ?? 0,
+    state: captureState,
+    updatedAt: Date.now()
+  };
+}
+function broadcastCaptureSessionState() {
+  const snap = snapshotCaptureSession();
+  for (const win of captureWindows) {
+    try {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.CAPTURE_SESSION_STATE, snap);
+      }
+    } catch {
+    }
+  }
+}
+function updateMaskMouseBehavior() {
+  for (const win of captureWindows) {
+    try {
+      if (win.isDestroyed()) continue;
+      if (win.__captureRole !== "mask") continue;
+      win.setIgnoreMouseEvents(true, { forward: true });
+    } catch {
+    }
+  }
+  if (inputWindow && !inputWindow.isDestroyed()) {
+    try {
+      if (captureState === "selecting") {
+        inputWindow.setIgnoreMouseEvents(false);
+      } else {
+        inputWindow.setIgnoreMouseEvents(true, { forward: true });
+      }
+    } catch {
+    }
+  }
+}
+function transitionCaptureState(next) {
+  if (captureState === next) return;
+  if (!isCaptureStateTransitionAllowed(captureState, next)) {
+    console.warn("[main] invalid capture state transition", captureState, "->", next);
+    return;
+  }
+  captureState = next;
+  broadcastCaptureSessionState();
+  updateMaskMouseBehavior();
+}
+function isSessionCurrent(epoch, runId) {
+  return epoch === captureEpoch && activeCaptureRunId === runId;
 }
 function parseScreenNumber(name) {
   const m = name.match(/(\d+)/);
@@ -65,11 +195,41 @@ function unregisterCaptureEscShortcut() {
   globalShortcut.unregister("Esc");
   captureEscShortcutRegistered = false;
 }
-function closeAllCaptureWindows() {
-  captureSessionId++;
+function registerCaptureEnterShortcut() {
+  if (captureEnterShortcutRegistered) return;
+  const ok = globalShortcut.register("Enter", () => {
+    const sessionId = activeCaptureRunId ?? 0;
+    if (!sessionId) return;
+    if (!inputWindow || inputWindow.isDestroyed()) return;
+    try {
+      inputWindow.webContents.send(IPC_CHANNELS.CAPTURE_CONFIRM_REQUEST, { sessionId });
+    } catch {
+    }
+  });
+  if (ok) captureEnterShortcutRegistered = true;
+}
+function unregisterCaptureEnterShortcut() {
+  if (!captureEnterShortcutRegistered) return;
+  globalShortcut.unregister("Enter");
+  captureEnterShortcutRegistered = false;
+}
+function closeAllCaptureWindows(reason = "canceled") {
+  captureEpoch++;
   isCaptureStarting = false;
+  unregisterCaptureEnterShortcut();
+  captureBackgroundPayload = null;
+  captureVirtualBounds = null;
+  inputWindow = null;
+  if (reason === "finishing") {
+    transitionCaptureState("finishing");
+  } else if (reason === "canceled") {
+    transitionCaptureState("canceled");
+  }
   if (captureWindows.length <= 0) {
     unregisterCaptureEscShortcut();
+    unregisterCaptureEnterShortcut();
+    activeCaptureRunId = null;
+    transitionCaptureState("idle");
     if (tray) {
       updateTrayMenu();
     }
@@ -97,15 +257,17 @@ function loadConfig() {
     try {
       const parsed = JSON.parse(raw);
       const previousHotkey = typeof parsed.hotkey === "string" ? parsed.hotkey : "";
+      const maskAlpha = clampMaskAlpha(parsed.maskAlpha, 0.7);
       config = {
         configVersion: typeof parsed.configVersion === "number" ? parsed.configVersion : 1,
         hotkey: "F1",
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir: parsed.saveDir ?? path.join(app.getPath("pictures"), "ElectronScreenshot"),
-        openEditorAfterCapture: parsed.openEditorAfterCapture ?? true
+        openEditorAfterCapture: parsed.openEditorAfterCapture ?? true,
+        maskAlpha
       };
-      if ((config.configVersion ?? 1) < 2) {
-        config.configVersion = 2;
+      if ((config.configVersion ?? 1) < 3) {
+        config.configVersion = 3;
         saveConfig();
       } else if (previousHotkey.trim() !== "F1") {
         saveConfig();
@@ -115,11 +277,12 @@ function loadConfig() {
     }
   }
   config = {
-    configVersion: 2,
+    configVersion: 3,
     hotkey: "F1",
     autoSaveToFile: false,
     saveDir: path.join(app.getPath("pictures"), "ElectronScreenshot"),
-    openEditorAfterCapture: true
+    openEditorAfterCapture: true,
+    maskAlpha: 0.7
   };
 }
 function saveConfig() {
@@ -184,134 +347,340 @@ function createMainWindow() {
 function createCaptureWindow() {
   if (isCaptureActive()) {
     console.log("[main] captureWindow already exists");
+    emitCaptureError({
+      sessionId: activeCaptureRunId ?? 0,
+      code: CAPTURE_ERROR_CODES.ALREADY_ACTIVE,
+      stage: "precheck",
+      message: "capture session already active"
+    });
     return;
   }
   const displays = screen.getAllDisplays();
   if (displays.length <= 0) {
     console.error("[main] no displays found");
+    emitCaptureError({
+      sessionId: 0,
+      code: CAPTURE_ERROR_CODES.NO_DISPLAYS,
+      stage: "precheck",
+      message: "no displays found"
+    });
     return;
   }
-  const session = ++captureSessionId;
+  if (process.platform === "darwin") {
+    try {
+      const status = systemPreferences.getMediaAccessStatus("screen");
+      if (status !== "granted") {
+        emitCaptureError({
+          sessionId: 0,
+          code: CAPTURE_ERROR_CODES.MACOS_SCREEN_PERMISSION,
+          stage: "precheck",
+          message: `screen permission not granted: ${status}`,
+          details: { status }
+        });
+        return;
+      }
+    } catch (error) {
+      emitCaptureError({
+        sessionId: 0,
+        code: CAPTURE_ERROR_CODES.MACOS_SCREEN_PERMISSION,
+        stage: "precheck",
+        message: "failed to read macOS screen permission status",
+        details: { error: String(error) }
+      });
+    }
+  }
+  if (process.platform === "linux") {
+    const sessionType = process.env.XDG_SESSION_TYPE;
+    if (typeof sessionType === "string" && sessionType.toLowerCase() === "wayland") {
+      emitCaptureError({
+        sessionId: 0,
+        code: CAPTURE_ERROR_CODES.LINUX_WAYLAND_LIMITATION,
+        stage: "precheck",
+        message: "running under Wayland may limit screen capture",
+        details: { sessionType }
+      });
+    }
+  }
+  const epoch = ++captureEpoch;
+  const session = ++captureRunId;
+  activeCaptureRunId = session;
   isCaptureStarting = true;
+  transitionCaptureState("masked");
   registerCaptureEscShortcut();
   if (tray) {
     updateTrayMenu();
   }
+  console.log("[main] creating capture mask windows");
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const displayMetas = displays.map((d) => ({
+    id: d.id,
+    bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+    workArea: { x: d.workArea.x, y: d.workArea.y, width: d.workArea.width, height: d.workArea.height },
+    scaleFactor: d.scaleFactor,
+    rotation: d.rotation,
+    isPrimary: d.id === primaryDisplay.id
+  }));
+  const screensPayload = composeMultiCaptureBackgroundPayload({ sessionId: session, displays: displayMetas, screens: [] });
+  captureVirtualBounds = screensPayload.virtualBounds;
+  captureBackgroundPayload = null;
+  isClosingCaptureWindows = false;
+  captureWindows = [];
+  inputWindow = null;
+  for (const display of displays) {
+    const win = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: "#00000000",
+      webPreferences: {
+        preload: path.join(__dirname, "../preload/index.cjs"),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+    win.__captureRole = "mask";
+    win.setMenuBarVisibility(false);
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    captureWindows.push(win);
+    win.on("close", (e) => {
+      if (isClosingCaptureWindows) return;
+      e.preventDefault();
+      closeAllCaptureWindows("canceled");
+    });
+    win.on("closed", () => {
+      captureWindows = captureWindows.filter((w) => w !== win);
+      if (captureWindows.length <= 0) {
+        console.log("[main] captureWindow(s) closed");
+        isClosingCaptureWindows = false;
+        isCaptureStarting = false;
+        activeCaptureRunId = null;
+        inputWindow = null;
+        captureBackgroundPayload = null;
+        captureVirtualBounds = null;
+        if (captureState === "masked" || captureState === "selecting") {
+          transitionCaptureState("canceled");
+        }
+        transitionCaptureState("idle");
+        unregisterCaptureEscShortcut();
+        unregisterCaptureEnterShortcut();
+        if (tray) updateTrayMenu();
+      }
+    });
+    win.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
+      console.error("[main] maskWindow did-fail-load", errorCode, errorDescription);
+      emitCaptureError({
+        sessionId: session,
+        code: CAPTURE_ERROR_CODES.WINDOW_LOAD_FAILED,
+        stage: "mask-load",
+        message: "mask window failed to load",
+        details: { errorCode, errorDescription, displayId: display.id }
+      });
+      closeAllCaptureWindows("canceled");
+    });
+    win.webContents.once("did-finish-load", () => {
+      try {
+        const maskAlpha = clampMaskAlpha(config?.maskAlpha, 0.7);
+        win.webContents.send(IPC_CHANNELS.CAPTURE_MASK_INIT, {
+          sessionId: session,
+          displayId: display.id,
+          displayBounds: { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height },
+          maskAlpha
+        });
+      } catch {
+      }
+      win.showInactive();
+      updateMaskMouseBehavior();
+      broadcastCaptureSessionState();
+    });
+    if (isDev) {
+      win.loadURL("http://localhost:5173/mask.html");
+    } else {
+      win.loadFile(path.join(__dirname, "../renderer/mask.html"));
+    }
+  }
+  captureBackgroundPayload = screensPayload;
   void (async () => {
-    console.log("[main] creating captureWindow(s)");
-    let payloadByDisplayId = /* @__PURE__ */ new Map();
     try {
       for (const display of displays) {
-        if (session !== captureSessionId) {
-          return;
-        }
+        if (!isSessionCurrent(epoch, session)) return;
         const thumbnailSize = {
           width: Math.round(display.bounds.width * display.scaleFactor),
           height: Math.round(display.bounds.height * display.scaleFactor)
         };
-        const sources = await desktopCapturer.getSources({
-          types: ["screen"],
-          thumbnailSize
-        });
-        if (session !== captureSessionId) {
-          return;
+        let sources;
+        try {
+          sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize });
+        } catch (error) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.DESKTOP_CAPTURER_FAILED,
+            stage: "desktop-capture",
+            message: "desktopCapturer.getSources failed",
+            details: { displayId: display.id, error: String(error) }
+          });
+          throw error;
+        }
+        if (!isSessionCurrent(epoch, session)) return;
+        if (!sources || sources.length <= 0) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.SOURCES_EMPTY,
+            stage: "desktop-capture",
+            message: "desktopCapturer returned empty sources",
+            details: { displayId: display.id }
+          });
+          throw new Error(`empty sources displayId=${display.id}`);
         }
         const source = pickScreenSourceForDisplay(sources, display, displays);
         if (!source) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.SOURCE_MAP_FAILED,
+            stage: "map-source",
+            message: "cannot map screen source for display",
+            details: { displayId: display.id, sources: sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id })) }
+          });
           throw new Error(`cannot map screen source displayId=${display.id}`);
         }
         const image = source.thumbnail;
         if (image.isEmpty()) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.THUMBNAIL_EMPTY,
+            stage: "thumbnail",
+            message: "screen thumbnail is empty",
+            details: { displayId: display.id, sourceId: source.id, sourceName: source.name }
+          });
           throw new Error(`empty thumbnail displayId=${display.id}`);
         }
-        payloadByDisplayId.set(display.id, {
-          dataUrl: image.toDataURL(),
-          displaySize: { width: display.bounds.width, height: display.bounds.height },
-          scaleFactor: display.scaleFactor
+        screensPayload.screens.push({
+          displayId: display.id,
+          bounds: { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height },
+          scaleFactor: display.scaleFactor,
+          dataUrl: image.toDataURL()
         });
       }
     } catch (error) {
-      console.error("[main] captureWindow capture error", error);
-      closeAllCaptureWindows();
+      console.error("[main] capture background error", error);
+      emitCaptureError({
+        sessionId: session,
+        code: CAPTURE_ERROR_CODES.UNKNOWN,
+        stage: "unknown",
+        message: "capture background error",
+        details: { error: String(error) }
+      });
+      closeAllCaptureWindows("canceled");
       unregisterCaptureEscShortcut();
       return;
     }
-    if (session !== captureSessionId) {
-      return;
-    }
-    const primaryDisplay = screen.getPrimaryDisplay();
-    isClosingCaptureWindows = false;
-    captureWindows = [];
+    if (!isSessionCurrent(epoch, session)) return;
     isCaptureStarting = false;
-    for (const display of displays) {
-      const payload = payloadByDisplayId.get(display.id);
-      if (!payload) continue;
-      const win = new BrowserWindow({
-        x: display.bounds.x,
-        y: display.bounds.y,
-        width: display.bounds.width,
-        height: display.bounds.height,
-        frame: false,
-        transparent: true,
-        resizable: false,
-        movable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        show: false,
-        backgroundColor: "#00000000",
-        webPreferences: {
-          preload: path.join(__dirname, "../preload/index.cjs"),
-          contextIsolation: true,
-          nodeIntegration: false
-        }
-      });
-      win.setMenuBarVisibility(false);
-      captureWindows.push(win);
-      win.on("close", (e) => {
-        if (isClosingCaptureWindows) return;
-        e.preventDefault();
-        closeAllCaptureWindows();
-      });
-      win.on("closed", () => {
-        captureWindows = captureWindows.filter((w) => w !== win);
-        if (captureWindows.length <= 0) {
-          console.log("[main] captureWindow(s) closed");
-          isClosingCaptureWindows = false;
-          isCaptureStarting = false;
-          unregisterCaptureEscShortcut();
-          if (tray) {
-            updateTrayMenu();
-          }
-        }
-      });
-      win.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
-        console.error("[main] captureWindow did-fail-load", errorCode, errorDescription);
-        closeAllCaptureWindows();
-      });
-      win.webContents.once("did-finish-load", () => {
-        if (isDev) {
-          win.webContents.openDevTools({ mode: "detach" });
-          win.setAlwaysOnTop(false);
-        }
-        win.webContents.send("capture:set-background", {
-          mode: "single",
-          ...payload
-        });
-        win.show();
-        if (display.id === primaryDisplay.id) {
-          win.focus();
-        }
-      });
-      if (isDev) {
-        win.loadURL("http://localhost:5173/capture.html");
-      } else {
-        win.loadFile(path.join(__dirname, "../renderer/capture.html"));
+    captureBackgroundPayload = screensPayload;
+    const currentInput = inputWindow;
+    if (currentInput && !currentInput.isDestroyed()) {
+      try {
+        currentInput.webContents.send("capture:set-background", screensPayload);
+      } catch {
       }
     }
-    if (tray) {
-      updateTrayMenu();
-    }
+    if (tray) updateTrayMenu();
   })();
+}
+function enterSelectingMode() {
+  const sessionId = activeCaptureRunId ?? 0;
+  if (!sessionId) return;
+  if (inputWindow && !inputWindow.isDestroyed()) return;
+  const vb = captureVirtualBounds;
+  if (!vb) return;
+  transitionCaptureState("selecting");
+  registerCaptureEnterShortcut();
+  const win = new BrowserWindow({
+    x: vb.x,
+    y: vb.y,
+    width: vb.width,
+    height: vb.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.__captureRole = "input";
+  inputWindow = win;
+  win.setMenuBarVisibility(false);
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  captureWindows.push(win);
+  updateMaskMouseBehavior();
+  win.on("close", (e) => {
+    if (isClosingCaptureWindows) return;
+    e.preventDefault();
+    closeAllCaptureWindows("canceled");
+  });
+  win.on("closed", () => {
+    captureWindows = captureWindows.filter((w) => w !== win);
+    if (inputWindow === win) inputWindow = null;
+    if (captureWindows.length <= 0) {
+      console.log("[main] captureWindow(s) closed");
+      isClosingCaptureWindows = false;
+      isCaptureStarting = false;
+      activeCaptureRunId = null;
+      inputWindow = null;
+      captureBackgroundPayload = null;
+      captureVirtualBounds = null;
+      if (captureState === "masked" || captureState === "selecting") {
+        transitionCaptureState("canceled");
+      }
+      transitionCaptureState("idle");
+      unregisterCaptureEscShortcut();
+      unregisterCaptureEnterShortcut();
+      if (tray) updateTrayMenu();
+    }
+  });
+  win.webContents.once("did-fail-load", (_event, errorCode, errorDescription) => {
+    console.error("[main] inputWindow did-fail-load", errorCode, errorDescription);
+    emitCaptureError({
+      sessionId,
+      code: CAPTURE_ERROR_CODES.WINDOW_LOAD_FAILED,
+      stage: "input-load",
+      message: "input window failed to load",
+      details: { errorCode, errorDescription }
+    });
+    closeAllCaptureWindows("canceled");
+  });
+  win.webContents.once("did-finish-load", () => {
+    if (captureBackgroundPayload && captureBackgroundPayload.sessionId === sessionId) {
+      try {
+        win.webContents.send("capture:set-background", captureBackgroundPayload);
+      } catch {
+      }
+    }
+    win.showInactive();
+    updateMaskMouseBehavior();
+    broadcastCaptureSessionState();
+  });
+  if (isDev) {
+    win.loadURL("http://localhost:5173/capture.html");
+  } else {
+    win.loadFile(path.join(__dirname, "../renderer/capture.html"));
+  }
 }
 function createEditorWindow() {
   if (editorWindow) {
@@ -357,11 +726,15 @@ function registerShortcuts() {
   }
   const handler = () => {
     console.log("[main] global shortcut triggered", config.hotkey);
-    if (isCaptureActive()) {
-      closeAllCaptureWindows();
-    } else {
+    if (!isCaptureActive()) {
       createCaptureWindow();
+      return;
     }
+    if (captureState === "masked") {
+      enterSelectingMode();
+      return;
+    }
+    closeAllCaptureWindows();
   };
   const requestedHotkey = "F1";
   let ok = globalShortcut.register(requestedHotkey, handler);
@@ -383,12 +756,16 @@ function registerIpcHandlers() {
   });
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch) => {
     const { hotkey: _hotkey, ...rest } = patch;
-    config = { ...config, ...rest, hotkey: "F1" };
+    const maskAlpha = clampMaskAlpha(rest.maskAlpha, config.maskAlpha);
+    config = { ...config, ...rest, hotkey: "F1", maskAlpha };
     saveConfig();
     registerShortcuts();
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl) => {
+    if (isCaptureActive()) {
+      transitionCaptureState("finishing");
+    }
     lastCaptureDataUrl = dataUrl;
     const image = nativeImage.createFromDataURL(dataUrl);
     clipboard.writeImage(image);
@@ -417,6 +794,35 @@ function registerIpcHandlers() {
       editorWindow?.webContents.send("editor:image", dataUrl);
     }
     return filePath;
+  });
+  ipcMain.on(IPC_CHANNELS.CAPTURE_SESSION_REPORT, (_event, report) => {
+    if (!report || typeof report !== "object") return;
+    if (typeof report.sessionId !== "number") return;
+    if (report.sessionId !== activeCaptureRunId) return;
+    if (report.state === "masked") transitionCaptureState("masked");
+    else if (report.state === "selecting") transitionCaptureState("selecting");
+    else if (report.state === "finishing") transitionCaptureState("finishing");
+    else if (report.state === "canceled") transitionCaptureState("canceled");
+  });
+  ipcMain.on(IPC_CHANNELS.CAPTURE_SELECTION_UPDATE, (_event, payload) => {
+    if (!payload || typeof payload !== "object") return;
+    if (typeof payload.sessionId !== "number") return;
+    if (payload.sessionId !== activeCaptureRunId) return;
+    for (const win of captureWindows) {
+      try {
+        if (win.isDestroyed()) continue;
+        if (win.__captureRole !== "mask") continue;
+        win.webContents.send(IPC_CHANNELS.CAPTURE_SELECTION_BROADCAST, payload);
+      } catch {
+      }
+    }
+  });
+  ipcMain.on(IPC_CHANNELS.CAPTURE_CLOSE, (_event, req) => {
+    if (!req || typeof req !== "object") return;
+    if (typeof req.sessionId !== "number") return;
+    if (req.sessionId !== activeCaptureRunId) return;
+    const reason = req.reason === "finishing" ? "finishing" : "canceled";
+    closeAllCaptureWindows(reason);
   });
   ipcMain.handle(IPC_CHANNELS.HISTORY_LIST, () => {
     return history;

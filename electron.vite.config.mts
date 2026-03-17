@@ -29,6 +29,7 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
           capture: resolve(__dirname, 'src/renderer/capture.html'),
+          mask: resolve(__dirname, 'src/renderer/mask.html'),
           editor: resolve(__dirname, 'src/renderer/editor.html')
         }
       }

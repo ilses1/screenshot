@@ -27,6 +27,7 @@ export function CaptureApp() {
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
   const scaleFactorRef = useRef(1)
   const lastBackgroundSeqRef = useRef(0)
+  const sessionIdRef = useRef(0)
 
   const isSelectingRef = useRef(false)
   const isPendingConfirmRef = useRef(false)
@@ -41,6 +42,15 @@ export function CaptureApp() {
 
   const [toolbarVisible, setToolbarVisible] = useState(false)
   const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number }>({ left: 12, top: 12 })
+
+  const reportSessionState = useCallback((state: 'masked' | 'selecting' | 'finishing' | 'canceled') => {
+    const sessionId = sessionIdRef.current
+    if (!sessionId) return
+    try {
+      window.captureApi?.reportSessionState?.({ sessionId, state } as any)
+    } catch {
+    }
+  }, [])
 
   const getSelectionRect = useCallback((): Rect => {
     const start = startRef.current
@@ -144,7 +154,8 @@ export function CaptureApp() {
     setToolbarVisible(true)
     positionToolbarToSelection()
     updateTip(rect)
-  }, [getSelectionRect, positionToolbarToSelection, resetTip, updateTip])
+    reportSessionState('masked')
+  }, [getSelectionRect, positionToolbarToSelection, reportSessionState, resetTip, updateTip])
 
   const finishSelection = useCallback(() => {
     if (isFinishingRef.current) return
@@ -194,15 +205,18 @@ export function CaptureApp() {
   const onConfirm = useCallback(() => {
     if (!isPendingConfirmRef.current) return
     setToolbarVisible(false)
+    reportSessionState('finishing')
     finishSelection()
-  }, [finishSelection])
+  }, [finishSelection, reportSessionState])
 
   const onCancel = useCallback(() => {
+    reportSessionState('canceled')
     window.close()
-  }, [])
+  }, [reportSessionState])
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button === 2) {
+      reportSessionState('canceled')
       window.close()
       return
     }
@@ -221,7 +235,8 @@ export function CaptureApp() {
     const p = getCanvasPoint(event)
     startRef.current = p
     currentRef.current = p
-  }, [getCanvasPoint])
+    reportSessionState('selecting')
+  }, [getCanvasPoint, reportSessionState])
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isSelectingRef.current) return
@@ -246,13 +261,15 @@ export function CaptureApp() {
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch { }
+    reportSessionState('canceled')
     window.close()
-  }, [])
+  }, [reportSessionState])
 
   const onContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
+    reportSessionState('canceled')
     window.close()
-  }, [])
+  }, [reportSessionState])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -294,6 +311,7 @@ export function CaptureApp() {
     window.focus()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        reportSessionState('canceled')
         window.close()
       }
     }
@@ -310,12 +328,16 @@ export function CaptureApp() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('resize', onResize)
     }
-  }, [positionToolbarToSelection, setCanvasSize])
+  }, [positionToolbarToSelection, reportSessionState, setCanvasSize])
 
   useEffect(() => {
     const applyPayload = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
       const mode = (payload as any).mode
+      const sessionId = typeof (payload as any).sessionId === 'number' ? ((payload as any).sessionId as number) : 0
+      if (sessionId) {
+        sessionIdRef.current = sessionId
+      }
 
       if (mode === 'multi') {
         const { virtualBounds, compositeScaleFactor, screens } = payload as any
@@ -377,6 +399,7 @@ export function CaptureApp() {
             isPendingConfirmRef.current = false
             setToolbarVisible(false)
             resetTip()
+            reportSessionState('masked')
           } catch {
           }
         })()
@@ -408,6 +431,7 @@ export function CaptureApp() {
         isPendingConfirmRef.current = false
         setToolbarVisible(false)
         resetTip()
+        reportSessionState('masked')
       }
     }
 
@@ -435,7 +459,7 @@ export function CaptureApp() {
     return () => {
       window.removeEventListener('capture:set-background', onBufferedEvent as EventListener)
     }
-  }, [resetTip, setCanvasSize])
+  }, [reportSessionState, resetTip, setCanvasSize])
 
   const tipStyle = useMemo<React.CSSProperties>(() => {
     return {

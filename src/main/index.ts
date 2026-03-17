@@ -1,19 +1,31 @@
-import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer, screen, clipboard } from 'electron'
+import { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, ipcMain, desktopCapturer, screen, clipboard, systemPreferences } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import type { AppConfig, ScreenshotRecord } from '../common/types'
 import { IPC_CHANNELS } from '../common/ipcChannels'
+import { CAPTURE_ERROR_CODES } from '../common/capture'
+import type { CaptureCloseRequest, CaptureErrorPayload, CaptureSelectionUpdate, CaptureSessionReport, CaptureSessionSnapshot, CaptureSessionState, CaptureSetBackgroundPayload, DisplayMetadata } from '../common/capture'
+import { clampMaskAlpha } from '../common/maskAlpha'
+import { composeMultiCaptureBackgroundPayload } from '../common/capturePayload'
+import { isCaptureStateTransitionAllowed } from '../common/captureStateMachine'
 
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
 let captureWindows: BrowserWindow[] = []
+let inputWindow: BrowserWindow | null = null
 let editorWindow: BrowserWindow | null = null
 let captureEscShortcutRegistered = false
+let captureEnterShortcutRegistered = false
 let isQuitting = false
 let isClosingCaptureWindows = false
 let isCaptureStarting = false
-let captureSessionId = 0
+let captureEpoch = 0
+let captureRunId = 0
+let activeCaptureRunId: number | null = null
+let captureState: CaptureSessionState = 'idle'
+let captureBackgroundPayload: Extract<CaptureSetBackgroundPayload, { mode: 'multi' }> | null = null
+let captureVirtualBounds: { x: number; y: number; width: number; height: number } | null = null
 
 let history: ScreenshotRecord[] = []
 let lastCaptureDataUrl: string | null = null
@@ -22,23 +34,68 @@ const isDev = !app.isPackaged
 
 let config: AppConfig
 function isCaptureActive() {
-  return isCaptureStarting || captureWindows.length > 0
+  return isCaptureStarting || captureWindows.length > 0 || activeCaptureRunId !== null
 }
 
-function getVirtualBounds(displays: Electron.Display[]) {
-  if (displays.length <= 0) {
-    return { x: 0, y: 0, width: 0, height: 0 }
+function emitCaptureError(payload: Omit<CaptureErrorPayload, 'platform'>) {
+  const full: CaptureErrorPayload = { ...payload, platform: process.platform }
+  console.error('[capture:error]', JSON.stringify(full))
+}
+
+function snapshotCaptureSession(): CaptureSessionSnapshot {
+  return {
+    sessionId: activeCaptureRunId ?? 0,
+    state: captureState,
+    updatedAt: Date.now()
   }
-  return displays.reduce(
-    (acc, d) => {
-      const x1 = Math.min(acc.x, d.bounds.x)
-      const y1 = Math.min(acc.y, d.bounds.y)
-      const x2 = Math.max(acc.x + acc.width, d.bounds.x + d.bounds.width)
-      const y2 = Math.max(acc.y + acc.height, d.bounds.y + d.bounds.height)
-      return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
-    },
-    { x: displays[0].bounds.x, y: displays[0].bounds.y, width: displays[0].bounds.width, height: displays[0].bounds.height }
-  )
+}
+
+function broadcastCaptureSessionState() {
+  const snap = snapshotCaptureSession()
+  for (const win of captureWindows) {
+    try {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.CAPTURE_SESSION_STATE, snap)
+      }
+    } catch {
+    }
+  }
+}
+
+function updateMaskMouseBehavior() {
+  for (const win of captureWindows) {
+    try {
+      if (win.isDestroyed()) continue
+      if ((win as any).__captureRole !== 'mask') continue
+      win.setIgnoreMouseEvents(true, { forward: true })
+    } catch {
+    }
+  }
+  if (inputWindow && !inputWindow.isDestroyed()) {
+    try {
+      if (captureState === 'selecting') {
+        inputWindow.setIgnoreMouseEvents(false)
+      } else {
+        inputWindow.setIgnoreMouseEvents(true, { forward: true })
+      }
+    } catch {
+    }
+  }
+}
+
+function transitionCaptureState(next: CaptureSessionState) {
+  if (captureState === next) return
+  if (!isCaptureStateTransitionAllowed(captureState, next)) {
+    console.warn('[main] invalid capture state transition', captureState, '->', next)
+    return
+  }
+  captureState = next
+  broadcastCaptureSessionState()
+  updateMaskMouseBehavior()
+}
+
+function isSessionCurrent(epoch: number, runId: number) {
+  return epoch === captureEpoch && activeCaptureRunId === runId
 }
 
 function parseScreenNumber(name: string) {
@@ -91,11 +148,43 @@ function unregisterCaptureEscShortcut() {
   captureEscShortcutRegistered = false
 }
 
-function closeAllCaptureWindows() {
-  captureSessionId++
+function registerCaptureEnterShortcut() {
+  if (captureEnterShortcutRegistered) return
+  const ok = globalShortcut.register('Enter', () => {
+    const sessionId = activeCaptureRunId ?? 0
+    if (!sessionId) return
+    if (!inputWindow || inputWindow.isDestroyed()) return
+    try {
+      inputWindow.webContents.send(IPC_CHANNELS.CAPTURE_CONFIRM_REQUEST, { sessionId })
+    } catch {
+    }
+  })
+  if (ok) captureEnterShortcutRegistered = true
+}
+
+function unregisterCaptureEnterShortcut() {
+  if (!captureEnterShortcutRegistered) return
+  globalShortcut.unregister('Enter')
+  captureEnterShortcutRegistered = false
+}
+
+function closeAllCaptureWindows(reason: Exclude<CaptureSessionState, 'idle'> = 'canceled') {
+  captureEpoch++
   isCaptureStarting = false
+  unregisterCaptureEnterShortcut()
+  captureBackgroundPayload = null
+  captureVirtualBounds = null
+  inputWindow = null
+  if (reason === 'finishing') {
+    transitionCaptureState('finishing')
+  } else if (reason === 'canceled') {
+    transitionCaptureState('canceled')
+  }
   if (captureWindows.length <= 0) {
     unregisterCaptureEscShortcut()
+    unregisterCaptureEnterShortcut()
+    activeCaptureRunId = null
+    transitionCaptureState('idle')
     if (tray) {
       updateTrayMenu()
     }
@@ -125,6 +214,7 @@ function loadConfig() {
     try {
       const parsed = JSON.parse(raw)
       const previousHotkey = typeof parsed.hotkey === 'string' ? parsed.hotkey : ''
+      const maskAlpha = clampMaskAlpha(parsed.maskAlpha, 0.7)
       config = {
         configVersion: typeof parsed.configVersion === 'number' ? parsed.configVersion : 1,
         hotkey: 'F1',
@@ -132,11 +222,12 @@ function loadConfig() {
         saveDir:
           parsed.saveDir ??
           path.join(app.getPath('pictures'), 'ElectronScreenshot'),
-        openEditorAfterCapture: parsed.openEditorAfterCapture ?? true
+        openEditorAfterCapture: parsed.openEditorAfterCapture ?? true,
+        maskAlpha
       }
 
-      if ((config.configVersion ?? 1) < 2) {
-        config.configVersion = 2
+      if ((config.configVersion ?? 1) < 3) {
+        config.configVersion = 3
         saveConfig()
       } else if (previousHotkey.trim() !== 'F1') {
         saveConfig()
@@ -147,11 +238,12 @@ function loadConfig() {
   }
 
   config = {
-    configVersion: 2,
+    configVersion: 3,
     hotkey: 'F1',
     autoSaveToFile: false,
     saveDir: path.join(app.getPath('pictures'), 'ElectronScreenshot'),
-    openEditorAfterCapture: true
+    openEditorAfterCapture: true,
+    maskAlpha: 0.7
   }
 }
 
@@ -226,154 +318,372 @@ function createMainWindow() {
 function createCaptureWindow() {
   if (isCaptureActive()) {
     console.log('[main] captureWindow already exists')
+    emitCaptureError({
+      sessionId: activeCaptureRunId ?? 0,
+      code: CAPTURE_ERROR_CODES.ALREADY_ACTIVE,
+      stage: 'precheck',
+      message: 'capture session already active'
+    })
     return
   }
 
   const displays = screen.getAllDisplays()
   if (displays.length <= 0) {
     console.error('[main] no displays found')
+    emitCaptureError({
+      sessionId: 0,
+      code: CAPTURE_ERROR_CODES.NO_DISPLAYS,
+      stage: 'precheck',
+      message: 'no displays found'
+    })
     return
   }
 
-  const session = ++captureSessionId
+  if (process.platform === 'darwin') {
+    try {
+      const status = systemPreferences.getMediaAccessStatus('screen')
+      if (status !== 'granted') {
+        emitCaptureError({
+          sessionId: 0,
+          code: CAPTURE_ERROR_CODES.MACOS_SCREEN_PERMISSION,
+          stage: 'precheck',
+          message: `screen permission not granted: ${status}`,
+          details: { status }
+        })
+        return
+      }
+    } catch (error) {
+      emitCaptureError({
+        sessionId: 0,
+        code: CAPTURE_ERROR_CODES.MACOS_SCREEN_PERMISSION,
+        stage: 'precheck',
+        message: 'failed to read macOS screen permission status',
+        details: { error: String(error) }
+      })
+    }
+  }
+
+  if (process.platform === 'linux') {
+    const sessionType = process.env.XDG_SESSION_TYPE
+    if (typeof sessionType === 'string' && sessionType.toLowerCase() === 'wayland') {
+      emitCaptureError({
+        sessionId: 0,
+        code: CAPTURE_ERROR_CODES.LINUX_WAYLAND_LIMITATION,
+        stage: 'precheck',
+        message: 'running under Wayland may limit screen capture',
+        details: { sessionType }
+      })
+    }
+  }
+
+  const epoch = ++captureEpoch
+  const session = ++captureRunId
+  activeCaptureRunId = session
   isCaptureStarting = true
+  transitionCaptureState('masked')
   registerCaptureEscShortcut()
   if (tray) {
     updateTrayMenu()
   }
 
-  void (async () => {
-    console.log('[main] creating captureWindow(s)')
+  console.log('[main] creating capture mask windows')
 
-    let payloadByDisplayId = new Map<number, { dataUrl: string; displaySize: { width: number; height: number }; scaleFactor: number }>()
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const displayMetas: DisplayMetadata[] = displays.map(d => ({
+    id: d.id,
+    bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+    workArea: { x: d.workArea.x, y: d.workArea.y, width: d.workArea.width, height: d.workArea.height },
+    scaleFactor: d.scaleFactor,
+    rotation: d.rotation,
+    isPrimary: d.id === primaryDisplay.id
+  }))
+
+  const screensPayload = composeMultiCaptureBackgroundPayload({ sessionId: session, displays: displayMetas, screens: [] })
+  captureVirtualBounds = screensPayload.virtualBounds
+  captureBackgroundPayload = null
+
+  isClosingCaptureWindows = false
+  captureWindows = []
+  inputWindow = null
+
+  for (const display of displays) {
+    const win = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+
+    ;(win as any).__captureRole = 'mask'
+    win.setMenuBarVisibility(false)
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    captureWindows.push(win)
+
+    win.on('close', e => {
+      if (isClosingCaptureWindows) return
+      e.preventDefault()
+      closeAllCaptureWindows('canceled')
+    })
+
+    win.on('closed', () => {
+      captureWindows = captureWindows.filter(w => w !== win)
+      if (captureWindows.length <= 0) {
+        console.log('[main] captureWindow(s) closed')
+        isClosingCaptureWindows = false
+        isCaptureStarting = false
+        activeCaptureRunId = null
+        inputWindow = null
+        captureBackgroundPayload = null
+        captureVirtualBounds = null
+        if (captureState === 'masked' || captureState === 'selecting') {
+          transitionCaptureState('canceled')
+        }
+        transitionCaptureState('idle')
+        unregisterCaptureEscShortcut()
+        unregisterCaptureEnterShortcut()
+        if (tray) updateTrayMenu()
+      }
+    })
+
+    win.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+      console.error('[main] maskWindow did-fail-load', errorCode, errorDescription)
+      emitCaptureError({
+        sessionId: session,
+        code: CAPTURE_ERROR_CODES.WINDOW_LOAD_FAILED,
+        stage: 'mask-load',
+        message: 'mask window failed to load',
+        details: { errorCode, errorDescription, displayId: display.id }
+      })
+      closeAllCaptureWindows('canceled')
+    })
+
+    win.webContents.once('did-finish-load', () => {
+      try {
+        const maskAlpha = clampMaskAlpha(config?.maskAlpha, 0.7)
+        win.webContents.send(IPC_CHANNELS.CAPTURE_MASK_INIT, {
+          sessionId: session,
+          displayId: display.id,
+          displayBounds: { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height },
+          maskAlpha
+        })
+      } catch {
+      }
+      win.showInactive()
+      updateMaskMouseBehavior()
+      broadcastCaptureSessionState()
+    })
+
+    if (isDev) {
+      win.loadURL('http://localhost:5173/mask.html')
+    } else {
+      win.loadFile(path.join(__dirname, '../renderer/mask.html'))
+    }
+  }
+
+  captureBackgroundPayload = screensPayload
+
+  void (async () => {
     try {
       for (const display of displays) {
-        if (session !== captureSessionId) {
-          return
-        }
+        if (!isSessionCurrent(epoch, session)) return
         const thumbnailSize = {
           width: Math.round(display.bounds.width * display.scaleFactor),
           height: Math.round(display.bounds.height * display.scaleFactor)
         }
+        let sources: Electron.DesktopCapturerSource[]
+        try {
+          sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize })
+        } catch (error) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.DESKTOP_CAPTURER_FAILED,
+            stage: 'desktop-capture',
+            message: 'desktopCapturer.getSources failed',
+            details: { displayId: display.id, error: String(error) }
+          })
+          throw error
+        }
+        if (!isSessionCurrent(epoch, session)) return
 
-        const sources = await desktopCapturer.getSources({
-          types: ['screen'],
-          thumbnailSize
-        })
-        if (session !== captureSessionId) {
-          return
+        if (!sources || sources.length <= 0) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.SOURCES_EMPTY,
+            stage: 'desktop-capture',
+            message: 'desktopCapturer returned empty sources',
+            details: { displayId: display.id }
+          })
+          throw new Error(`empty sources displayId=${display.id}`)
         }
 
         const source = pickScreenSourceForDisplay(sources, display, displays)
         if (!source) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.SOURCE_MAP_FAILED,
+            stage: 'map-source',
+            message: 'cannot map screen source for display',
+            details: { displayId: display.id, sources: sources.map(s => ({ id: s.id, name: s.name, display_id: (s as any).display_id })) }
+          })
           throw new Error(`cannot map screen source displayId=${display.id}`)
         }
-
         const image = source.thumbnail
         if (image.isEmpty()) {
+          emitCaptureError({
+            sessionId: session,
+            code: CAPTURE_ERROR_CODES.THUMBNAIL_EMPTY,
+            stage: 'thumbnail',
+            message: 'screen thumbnail is empty',
+            details: { displayId: display.id, sourceId: source.id, sourceName: source.name }
+          })
           throw new Error(`empty thumbnail displayId=${display.id}`)
         }
 
-        payloadByDisplayId.set(display.id, {
-          dataUrl: image.toDataURL(),
-          displaySize: { width: display.bounds.width, height: display.bounds.height },
-          scaleFactor: display.scaleFactor
+        screensPayload.screens.push({
+          displayId: display.id,
+          bounds: { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height },
+          scaleFactor: display.scaleFactor,
+          dataUrl: image.toDataURL()
         })
       }
     } catch (error) {
-      console.error('[main] captureWindow capture error', error)
-      closeAllCaptureWindows()
+      console.error('[main] capture background error', error)
+      emitCaptureError({
+        sessionId: session,
+        code: CAPTURE_ERROR_CODES.UNKNOWN,
+        stage: 'unknown',
+        message: 'capture background error',
+        details: { error: String(error) }
+      })
+      closeAllCaptureWindows('canceled')
       unregisterCaptureEscShortcut()
       return
     }
 
-    if (session !== captureSessionId) {
-      return
-    }
-
-    const primaryDisplay = screen.getPrimaryDisplay()
-    isClosingCaptureWindows = false
-    captureWindows = []
+    if (!isSessionCurrent(epoch, session)) return
     isCaptureStarting = false
+    captureBackgroundPayload = screensPayload
 
-    for (const display of displays) {
-      const payload = payloadByDisplayId.get(display.id)
-      if (!payload) continue
-
-      const win = new BrowserWindow({
-        x: display.bounds.x,
-        y: display.bounds.y,
-        width: display.bounds.width,
-        height: display.bounds.height,
-        frame: false,
-        transparent: true,
-        resizable: false,
-        movable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        show: false,
-        backgroundColor: '#00000000',
-        webPreferences: {
-          preload: path.join(__dirname, '../preload/index.cjs'),
-          contextIsolation: true,
-          nodeIntegration: false
-        }
-      })
-
-      win.setMenuBarVisibility(false)
-      captureWindows.push(win)
-
-      win.on('close', e => {
-        if (isClosingCaptureWindows) return
-        e.preventDefault()
-        closeAllCaptureWindows()
-      })
-
-      win.on('closed', () => {
-        captureWindows = captureWindows.filter(w => w !== win)
-        if (captureWindows.length <= 0) {
-          console.log('[main] captureWindow(s) closed')
-          isClosingCaptureWindows = false
-          isCaptureStarting = false
-          unregisterCaptureEscShortcut()
-          if (tray) {
-            updateTrayMenu()
-          }
-        }
-      })
-
-      win.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
-        console.error('[main] captureWindow did-fail-load', errorCode, errorDescription)
-        closeAllCaptureWindows()
-      })
-
-      win.webContents.once('did-finish-load', () => {
-        if (isDev) {
-          win.webContents.openDevTools({ mode: 'detach' })
-          win.setAlwaysOnTop(false)
-        }
-        win.webContents.send('capture:set-background', {
-          mode: 'single',
-          ...payload
-        })
-
-        win.show()
-        if (display.id === primaryDisplay.id) {
-          win.focus()
-        }
-      })
-
-      if (isDev) {
-        win.loadURL('http://localhost:5173/capture.html')
-      } else {
-        win.loadFile(path.join(__dirname, '../renderer/capture.html'))
+    const currentInput = inputWindow as BrowserWindow | null
+    if (currentInput && !currentInput.isDestroyed()) {
+      try {
+        currentInput.webContents.send('capture:set-background', screensPayload)
+      } catch {
       }
     }
 
-    if (tray) {
-      updateTrayMenu()
-    }
+    if (tray) updateTrayMenu()
   })()
+}
+
+function enterSelectingMode() {
+  const sessionId = activeCaptureRunId ?? 0
+  if (!sessionId) return
+  if (inputWindow && !inputWindow.isDestroyed()) return
+  const vb = captureVirtualBounds
+  if (!vb) return
+
+  transitionCaptureState('selecting')
+  registerCaptureEnterShortcut()
+
+  const win = new BrowserWindow({
+    x: vb.x,
+    y: vb.y,
+    width: vb.width,
+    height: vb.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  ;(win as any).__captureRole = 'input'
+  inputWindow = win
+  win.setMenuBarVisibility(false)
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  captureWindows.push(win)
+  updateMaskMouseBehavior()
+
+  win.on('close', e => {
+    if (isClosingCaptureWindows) return
+    e.preventDefault()
+    closeAllCaptureWindows('canceled')
+  })
+
+  win.on('closed', () => {
+    captureWindows = captureWindows.filter(w => w !== win)
+    if (inputWindow === win) inputWindow = null
+    if (captureWindows.length <= 0) {
+      console.log('[main] captureWindow(s) closed')
+      isClosingCaptureWindows = false
+      isCaptureStarting = false
+      activeCaptureRunId = null
+      inputWindow = null
+      captureBackgroundPayload = null
+      captureVirtualBounds = null
+      if (captureState === 'masked' || captureState === 'selecting') {
+        transitionCaptureState('canceled')
+      }
+      transitionCaptureState('idle')
+      unregisterCaptureEscShortcut()
+      unregisterCaptureEnterShortcut()
+      if (tray) updateTrayMenu()
+    }
+  })
+
+  win.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[main] inputWindow did-fail-load', errorCode, errorDescription)
+    emitCaptureError({
+      sessionId,
+      code: CAPTURE_ERROR_CODES.WINDOW_LOAD_FAILED,
+      stage: 'input-load',
+      message: 'input window failed to load',
+      details: { errorCode, errorDescription }
+    })
+    closeAllCaptureWindows('canceled')
+  })
+
+  win.webContents.once('did-finish-load', () => {
+    if (captureBackgroundPayload && captureBackgroundPayload.sessionId === sessionId) {
+      try {
+        win.webContents.send('capture:set-background', captureBackgroundPayload)
+      } catch {
+      }
+    }
+    win.showInactive()
+    updateMaskMouseBehavior()
+    broadcastCaptureSessionState()
+  })
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/capture.html')
+  } else {
+    win.loadFile(path.join(__dirname, '../renderer/capture.html'))
+  }
 }
 
 function createEditorWindow() {
@@ -428,14 +738,17 @@ function registerShortcuts() {
     saveConfig()
   }
 
-  // 开启截图入口 1：全局快捷键（再次触发则关闭截图遮罩窗口）
   const handler = () => {
     console.log('[main] global shortcut triggered', config.hotkey)
-    if (isCaptureActive()) {
-      closeAllCaptureWindows()
-    } else {
+    if (!isCaptureActive()) {
       createCaptureWindow()
+      return
     }
+    if (captureState === 'masked') {
+      enterSelectingMode()
+      return
+    }
+    closeAllCaptureWindows()
   }
 
   const requestedHotkey = 'F1'
@@ -461,13 +774,17 @@ function registerIpcHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch: Partial<AppConfig>) => {
     const { hotkey: _hotkey, ...rest } = patch
-    config = { ...config, ...rest, hotkey: 'F1' }
+    const maskAlpha = clampMaskAlpha((rest as any).maskAlpha, config.maskAlpha)
+    config = { ...config, ...rest, hotkey: 'F1', maskAlpha }
     saveConfig()
     registerShortcuts()
     return config
   })
 
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl: string) => {
+    if (isCaptureActive()) {
+      transitionCaptureState('finishing')
+    }
     lastCaptureDataUrl = dataUrl
 
     const image = nativeImage.createFromDataURL(dataUrl)
@@ -504,6 +821,39 @@ function registerIpcHandlers() {
     }
 
     return filePath
+  })
+
+  ipcMain.on(IPC_CHANNELS.CAPTURE_SESSION_REPORT, (_event, report: CaptureSessionReport) => {
+    if (!report || typeof report !== 'object') return
+    if (typeof report.sessionId !== 'number') return
+    if (report.sessionId !== activeCaptureRunId) return
+
+    if (report.state === 'masked') transitionCaptureState('masked')
+    else if (report.state === 'selecting') transitionCaptureState('selecting')
+    else if (report.state === 'finishing') transitionCaptureState('finishing')
+    else if (report.state === 'canceled') transitionCaptureState('canceled')
+  })
+
+  ipcMain.on(IPC_CHANNELS.CAPTURE_SELECTION_UPDATE, (_event, payload: CaptureSelectionUpdate) => {
+    if (!payload || typeof payload !== 'object') return
+    if (typeof payload.sessionId !== 'number') return
+    if (payload.sessionId !== activeCaptureRunId) return
+    for (const win of captureWindows) {
+      try {
+        if (win.isDestroyed()) continue
+        if ((win as any).__captureRole !== 'mask') continue
+        win.webContents.send(IPC_CHANNELS.CAPTURE_SELECTION_BROADCAST, payload)
+      } catch {
+      }
+    }
+  })
+
+  ipcMain.on(IPC_CHANNELS.CAPTURE_CLOSE, (_event, req: CaptureCloseRequest) => {
+    if (!req || typeof req !== 'object') return
+    if (typeof req.sessionId !== 'number') return
+    if (req.sessionId !== activeCaptureRunId) return
+    const reason = req.reason === 'finishing' ? 'finishing' : 'canceled'
+    closeAllCaptureWindows(reason)
   })
 
   ipcMain.handle(IPC_CHANNELS.HISTORY_LIST, () => {
@@ -556,7 +906,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('CAPTURE_GET_SOURCES', async (_event, opts) => {
     const sources = await desktopCapturer.getSources(opts)
-    // 序列化 nativeImage 为 dataURL，避免传输问题
     return sources.map(source => ({
       id: source.id,
       name: source.name,
@@ -595,7 +944,6 @@ function updateTrayMenu() {
     {
       label: isCaptureActive() ? '结束截图' : '截图',
       click: () => {
-        // 开启截图入口 2：托盘菜单（再次点击则关闭截图遮罩窗口）
         if (isCaptureActive()) {
           console.log('[main] tray menu click: stop capture')
           closeAllCaptureWindows()
