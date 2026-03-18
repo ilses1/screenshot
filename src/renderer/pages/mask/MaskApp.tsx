@@ -48,10 +48,10 @@ export function MaskApp() {
   }, [setCanvasSize])
 
   useEffect(() => {
-    const onInit = (payload: any) => {
+    const applyInit = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
-      const sessionId = typeof payload.sessionId === 'number' ? payload.sessionId : 0
-      const b = payload.displayBounds
+      const sessionId = typeof (payload as any).sessionId === 'number' ? ((payload as any).sessionId as number) : 0
+      const b = (payload as any).displayBounds
       if (!sessionId || !b) return
       if (typeof b.x !== 'number' || typeof b.y !== 'number' || typeof b.width !== 'number' || typeof b.height !== 'number') return
       sessionIdRef.current = sessionId
@@ -59,11 +59,11 @@ export function MaskApp() {
       maskAlphaRef.current = clampMaskAlpha((payload as any).maskAlpha, 0.7)
     }
 
-    const onRect = (payload: any) => {
+    const applyRect = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
-      const sessionId = typeof payload.sessionId === 'number' ? payload.sessionId : 0
+      const sessionId = typeof (payload as any).sessionId === 'number' ? ((payload as any).sessionId as number) : 0
       if (!sessionId || sessionId !== sessionIdRef.current) return
-      const r = payload.rect
+      const r = (payload as any).rect
       if (!r) {
         selectionAbsRef.current = null
         return
@@ -72,10 +72,40 @@ export function MaskApp() {
       selectionAbsRef.current = { x: r.x, y: r.y, width: r.width, height: r.height }
     }
 
-    try {
-      window.captureApi?.onMaskInit?.(onInit)
-      window.captureApi?.onSelectionRect?.(onRect)
-    } catch {
+    let lastInitSeq = 0
+    let lastSelectionSeq = 0
+
+    const syncFromBuffered = () => {
+      const initSeq = typeof window.__maskInitSeq === 'number' ? window.__maskInitSeq : 0
+      if (initSeq && initSeq !== lastInitSeq) {
+        lastInitSeq = initSeq
+        applyInit(window.__maskInitPayload)
+      }
+
+      const selectionSeq = typeof window.__maskSelectionSeq === 'number' ? window.__maskSelectionSeq : 0
+      if (selectionSeq && selectionSeq !== lastSelectionSeq) {
+        lastSelectionSeq = selectionSeq
+        applyRect(window.__maskSelectionPayload)
+      }
+    }
+
+    const onInitEvent = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { payload?: unknown } | undefined
+      applyInit(detail?.payload)
+    }
+
+    const onSelectionEvent = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { payload?: unknown } | undefined
+      applyRect(detail?.payload)
+    }
+
+    syncFromBuffered()
+    window.addEventListener('mask:init', onInitEvent as EventListener)
+    window.addEventListener('mask:selection', onSelectionEvent as EventListener)
+    syncFromBuffered()
+    return () => {
+      window.removeEventListener('mask:init', onInitEvent as EventListener)
+      window.removeEventListener('mask:selection', onSelectionEvent as EventListener)
     }
   }, [])
 
