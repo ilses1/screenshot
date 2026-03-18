@@ -257,20 +257,18 @@ function loadConfig() {
     const raw = fs.readFileSync(configPath, "utf-8");
     try {
       const parsed = JSON.parse(raw);
-      const previousHotkey = typeof parsed.hotkey === "string" ? parsed.hotkey : "";
+      const rawHotkey = typeof parsed.hotkey === "string" ? parsed.hotkey.trim() : "";
       const maskAlpha = clampMaskAlpha(parsed.maskAlpha, 0.7);
       config = {
         configVersion: typeof parsed.configVersion === "number" ? parsed.configVersion : 1,
-        hotkey: "F1",
+        hotkey: rawHotkey || "F1",
         autoSaveToFile: parsed.autoSaveToFile ?? false,
         saveDir: parsed.saveDir ?? path.join(app.getPath("pictures"), "ElectronScreenshot"),
         openEditorAfterCapture: parsed.openEditorAfterCapture ?? true,
         maskAlpha
       };
-      if ((config.configVersion ?? 1) < 3) {
-        config.configVersion = 3;
-        saveConfig();
-      } else if (previousHotkey.trim() !== "F1") {
+      if ((config.configVersion ?? 1) < 4) {
+        config.configVersion = 4;
         saveConfig();
       }
       return;
@@ -278,7 +276,7 @@ function loadConfig() {
     }
   }
   config = {
-    configVersion: 3,
+    configVersion: 4,
     hotkey: "F1",
     autoSaveToFile: false,
     saveDir: path.join(app.getPath("pictures"), "ElectronScreenshot"),
@@ -741,17 +739,13 @@ function createTray() {
   const icon = nativeImage.createFromPath(iconPath);
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon;
   tray = new Tray(trayIcon);
-  const hotkeyText = "F1";
+  const hotkeyText = config?.hotkey || "F1";
   tray.setToolTip(`截图助手 - 按 ${hotkeyText} 开始截图`);
   updateTrayMenu();
 }
-function registerShortcuts() {
-  globalShortcut.unregisterAll();
+let registeredScreenshotHotkey = null;
+function registerShortcuts(allowFallbackToF1 = true) {
   if (!config) return;
-  if (config.hotkey !== "F1") {
-    config.hotkey = "F1";
-    saveConfig();
-  }
   const handler = () => {
     console.log("[main] global shortcut triggered", config.hotkey);
     if (!isCaptureActive()) {
@@ -764,9 +758,28 @@ function registerShortcuts() {
     }
     closeAllCaptureWindows();
   };
-  const requestedHotkey = "F1";
+  const requestedHotkey = (config.hotkey || "F1").trim() || "F1";
+  if (registeredScreenshotHotkey) {
+    try {
+      globalShortcut.unregister(registeredScreenshotHotkey);
+    } catch {
+    }
+  }
   let ok = globalShortcut.register(requestedHotkey, handler);
+  let actualHotkey = requestedHotkey;
   console.log("是否注册快捷键成功", ok, requestedHotkey);
+  if (!ok && allowFallbackToF1 && requestedHotkey !== "F1") {
+    try {
+      ok = globalShortcut.register("F1", handler);
+      if (ok) {
+        config.hotkey = "F1";
+        saveConfig();
+        actualHotkey = "F1";
+      }
+    } catch {
+    }
+  }
+  registeredScreenshotHotkey = ok ? actualHotkey : null;
   console.log("[main] registerShortcuts", config.hotkey, ok ? "success" : "failed");
   if (tray) {
     updateTrayMenu();
@@ -783,11 +796,27 @@ function registerIpcHandlers() {
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, (_event, patch) => {
+    const prev = config;
+    const requestedHotkey = typeof patch.hotkey === "string" ? patch.hotkey.trim() : null;
+    if (requestedHotkey !== null && requestedHotkey.length === 0) {
+      throw new Error("截图快捷键不能为空");
+    }
     const { hotkey: _hotkey, ...rest } = patch;
     const maskAlpha = clampMaskAlpha(rest.maskAlpha, config.maskAlpha);
-    config = { ...config, ...rest, hotkey: "F1", maskAlpha };
+    config = {
+      ...config,
+      ...rest,
+      hotkey: requestedHotkey ?? config.hotkey,
+      maskAlpha
+    };
     saveConfig();
-    registerShortcuts();
+    registerShortcuts(false);
+    if (registeredScreenshotHotkey === null) {
+      config = prev;
+      saveConfig();
+      registerShortcuts(false);
+      throw new Error("快捷键注册失败，可能已被系统占用");
+    }
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl) => {
@@ -935,7 +964,7 @@ app.on("will-quit", () => {
 });
 function updateTrayMenu() {
   if (!tray) return;
-  const hotkeyText = "F1";
+  const hotkeyText = config?.hotkey || "F1";
   const contextMenu = Menu.buildFromTemplate([
     {
       label: isCaptureActive() ? "结束截图" : "截图",

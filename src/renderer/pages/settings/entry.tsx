@@ -17,6 +17,7 @@ import {
   Grid,
   Input,
   Layout,
+  Modal,
   Popconfirm,
   Row,
   Slider,
@@ -35,6 +36,7 @@ import {
 import dayjs from "dayjs";
 
 import type { AppConfig, ScreenshotRecord } from "../../../common/types";
+import { toAcceleratorFromKeydownLike } from "../../../common/hotkey";
 import type { ColumnsType } from "antd/es/table";
 import "antd/dist/reset.css";
 import "../../shared/styles/index.css";
@@ -42,8 +44,12 @@ import appIconUrl from "../../shared/assets/app-icon.svg?url";
 
 type SettingsFormValues = Pick<
   AppConfig,
-  "autoSaveToFile" | "saveDir" | "openEditorAfterCapture" | "maskAlpha"
+  "hotkey" | "autoSaveToFile" | "saveDir" | "openEditorAfterCapture" | "maskAlpha"
 >;
+
+function isMacPlatform() {
+  return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+}
 
 function SettingsApp() {
   const screens = Grid.useBreakpoint();
@@ -52,6 +58,8 @@ function SettingsApp() {
 
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [hotkeyRecordingOpen, setHotkeyRecordingOpen] = useState(false);
+  const [pendingHotkey, setPendingHotkey] = useState<string | null>(null);
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [history, setHistory] = useState<ScreenshotRecord[]>([]);
@@ -64,6 +72,7 @@ function SettingsApp() {
     try {
       const settings = await window.api.getSettings();
       form.setFieldsValue({
+        hotkey: settings.hotkey,
         autoSaveToFile: settings.autoSaveToFile,
         saveDir: settings.saveDir,
         openEditorAfterCapture: settings.openEditorAfterCapture,
@@ -83,6 +92,7 @@ function SettingsApp() {
       setSettingsSaving(true);
 
       const patch: Partial<AppConfig> = {
+        hotkey: values.hotkey.trim(),
         autoSaveToFile: values.autoSaveToFile,
         saveDir: values.saveDir.trim(),
         openEditorAfterCapture: values.openEditorAfterCapture,
@@ -90,6 +100,7 @@ function SettingsApp() {
       };
       const updated = await window.api.updateSettings(patch);
       form.setFieldsValue({
+        hotkey: updated.hotkey,
         saveDir: updated.saveDir,
         maskAlpha: updated.maskAlpha,
       });
@@ -103,7 +114,11 @@ function SettingsApp() {
       ) {
         return;
       }
-      message.error("保存设置失败");
+      const errMsg =
+        error && typeof error === "object" && "message" in error
+          ? String((error as any).message || "")
+          : "";
+      message.error(errMsg ? `保存设置失败：${errMsg}` : "保存设置失败");
       console.error(error);
     } finally {
       setSettingsSaving(false);
@@ -147,6 +162,42 @@ function SettingsApp() {
       console.error(error);
     }
   }, []);
+
+  useEffect(() => {
+    if (!hotkeyRecordingOpen) return;
+    setPendingHotkey(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === "Escape") {
+        setHotkeyRecordingOpen(false);
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        setPendingHotkey(null);
+        return;
+      }
+
+      const accelerator = toAcceleratorFromKeydownLike(
+        {
+          key: e.key,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          shiftKey: e.shiftKey,
+          metaKey: e.metaKey,
+        },
+        isMacPlatform() ? "mac" : "win"
+      );
+      if (accelerator) {
+        setPendingHotkey(accelerator);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [hotkeyRecordingOpen]);
 
   useEffect(() => {
     if (didInitRef.current) return;
@@ -248,7 +299,7 @@ function SettingsApp() {
                 </Typography.Title>
               </Space>
               <Typography.Paragraph className="settings-subtitle">
-                截图快捷键固定为 F1。管理保存策略与编辑器行为，历史记录支持复制路径与快速贴图。
+                可自定义截图快捷键。管理保存策略与编辑器行为，历史记录支持复制路径与快速贴图。
               </Typography.Paragraph>
 
               <Row gutter={[16, 16]}>
@@ -269,6 +320,7 @@ function SettingsApp() {
                       layout="vertical"
                       disabled={settingsLoading || settingsSaving}
                       initialValues={{
+                        hotkey: "F1",
                         autoSaveToFile: false,
                         saveDir: "",
                         openEditorAfterCapture: false,
@@ -279,11 +331,45 @@ function SettingsApp() {
                         <Col span={screens.lg ? 12 : 24}>
                           <Form.Item
                             label="截图快捷键"
+                            name="hotkey"
+                            rules={[
+                              { required: true, message: "请设置截图快捷键" },
+                              {
+                                validator: async (_rule, value: unknown) => {
+                                  const str = typeof value === "string" ? value.trim() : "";
+                                  if (!str) throw new Error("请设置截图快捷键");
+                                },
+                              },
+                            ]}
                           >
                             <Input
-                              value="F1"
                               autoComplete="off"
-                              disabled
+                              readOnly
+                              onClick={() => setHotkeyRecordingOpen(true)}
+                              addonAfter={
+                                <Space size={6}>
+                                  <Button
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setHotkeyRecordingOpen(true);
+                                    }}
+                                  >
+                                    修改
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      form.setFieldsValue({ hotkey: "F1" });
+                                    }}
+                                  >
+                                    默认
+                                  </Button>
+                                </Space>
+                              }
                             />
                           </Form.Item>
                         </Col>
@@ -423,6 +509,45 @@ function SettingsApp() {
           </Layout.Content>
         </div>
       </Layout>
+      <Modal
+        title="录制截图快捷键"
+        open={hotkeyRecordingOpen}
+        onCancel={() => setHotkeyRecordingOpen(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setHotkeyRecordingOpen(false)}>取消</Button>
+            <Button
+              type="primary"
+              disabled={!pendingHotkey}
+              onClick={() => {
+                if (!pendingHotkey) return;
+                form.setFieldsValue({ hotkey: pendingHotkey });
+                setHotkeyRecordingOpen(false);
+                message.success("快捷键已更新，点击“保存设置”后生效");
+              }}
+            >
+              使用该快捷键
+            </Button>
+          </Space>
+        }
+      >
+        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            直接按下新的按键组合（例如 Ctrl + Shift + A）。按 Esc 退出录制。
+          </Typography.Text>
+          <Card size="small" style={{ background: "rgba(255,255,255,0.5)" }}>
+            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+              <Typography.Text type="secondary">当前捕获</Typography.Text>
+              <Typography.Text strong>
+                {pendingHotkey ? pendingHotkey : "未捕获到有效快捷键"}
+              </Typography.Text>
+              <Typography.Text type="secondary">
+                仅支持功能键（F1~F24）或带修饰键的组合键。
+              </Typography.Text>
+            </Space>
+          </Card>
+        </Space>
+      </Modal>
     </ConfigProvider>
   );
 }
