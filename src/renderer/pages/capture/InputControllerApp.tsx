@@ -22,6 +22,8 @@ export function InputControllerApp() {
   const scaleFactorRef = useRef(1)
   const compositeCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const backgroundReadyRef = useRef(false)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const isSavingRef = useRef(false)
 
   const isSelectingRef = useRef(false)
   const isPendingConfirmRef = useRef(false)
@@ -173,11 +175,11 @@ export function InputControllerApp() {
   }, [getAbsRect, getSelectionRect, positionToolbarToSelection, resetTip, sendSelectionRect, stopBroadcastLoop, updateTip])
 
   const cropAndSave = useCallback(async () => {
-    if (!backgroundReadyRef.current) return
+    if (!backgroundReadyRef.current) throw new Error('background not ready')
     const composite = compositeCanvasRef.current
-    if (!composite) return
+    if (!composite) throw new Error('composite canvas missing')
     const rect = getSelectionRect()
-    if (rect.width < 5 || rect.height < 5) return
+    if (rect.width < 5 || rect.height < 5) throw new Error('invalid rect')
 
     const sf = scaleFactorRef.current
     const sx = Math.round(rect.x * sf)
@@ -193,8 +195,8 @@ export function InputControllerApp() {
     octx.drawImage(composite, sx, sy, sw, sh, 0, 0, sw, sh)
     const dataUrl = out.toDataURL('image/png')
 
-    window.captureApi.saveImageToClipboard(dataUrl)
-    await window.captureApi.saveImage(dataUrl).catch(() => {})
+    if (!window.captureApi?.saveImage) throw new Error('captureApi.saveImage missing')
+    await window.captureApi.saveImage(dataUrl)
   }, [getSelectionRect])
 
   const onConfirm = useCallback(() => {
@@ -202,14 +204,29 @@ export function InputControllerApp() {
     const sessionId = sessionIdRef.current
     if (!sessionId) return
     if (!backgroundReadyRef.current) return
+    if (isSavingRef.current) return
+    isSavingRef.current = true
     setToolbarVisible(false)
-    reportSessionState('finishing')
-    void cropAndSave().finally(() => {
+    const savingTip = '正在保存...'
+    if (lastTipRef.current !== savingTip) {
+      lastTipRef.current = savingTip
+      setTipText(savingTip)
+    }
+    void (async () => {
       try {
+        await cropAndSave()
+        reportSessionState('finishing')
         window.captureApi?.requestClose?.({ sessionId, reason: 'finishing' } as any)
       } catch {
+        isSavingRef.current = false
+        setToolbarVisible(true)
+        const failedTip = '保存失败，点击✓重试，Esc/右键取消'
+        if (lastTipRef.current !== failedTip) {
+          lastTipRef.current = failedTip
+          setTipText(failedTip)
+        }
       }
-    })
+    })()
   }, [cropAndSave, reportSessionState])
 
   const onCancel = useCallback(() => {
@@ -226,10 +243,16 @@ export function InputControllerApp() {
   }, [reportSessionState, sendSelectionRect, stopBroadcastLoop])
 
   const getPoint = useCallback((event: { clientX: number; clientY: number }): Point => {
-    return { x: clamp(event.clientX, 0, window.innerWidth), y: clamp(event.clientY, 0, window.innerHeight) }
+    const x = event.clientX
+    const y = event.clientY
+    return { x: clamp(x, 0, window.innerWidth), y: clamp(y, 0, window.innerHeight) }
   }, [])
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (toolbarVisible && event.target instanceof Node) {
+      const toolbarEl = toolbarRef.current
+      if (toolbarEl && toolbarEl.contains(event.target)) return
+    }
     if (event.button === 2) {
       event.preventDefault()
       onCancel()
@@ -257,7 +280,7 @@ export function InputControllerApp() {
     const rect = getSelectionRect()
     const abs = getAbsRect(rect)
     if (abs) sendSelectionRect(abs)
-  }, [getAbsRect, getPoint, getSelectionRect, onCancel, reportSessionState, sendSelectionRect, startBroadcastLoop])
+  }, [getAbsRect, getPoint, getSelectionRect, onCancel, reportSessionState, sendSelectionRect, startBroadcastLoop, toolbarVisible])
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isSelectingRef.current) return
@@ -464,7 +487,7 @@ export function InputControllerApp() {
       onPointerCancel={onPointerCancel}
     >
       <div style={tipStyle}>{tipText}</div>
-      <div style={toolbarStyle}>
+      <div ref={toolbarRef} style={toolbarStyle}>
         <button type="button" aria-label="确认" style={buttonStyle} onClick={onConfirm}>
           ✓
         </button>

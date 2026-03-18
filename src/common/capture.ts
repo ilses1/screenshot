@@ -74,6 +74,7 @@ export const CAPTURE_ERROR_CODES = {
   SOURCE_MAP_FAILED: 'CAPTURE_SOURCE_MAP_FAILED',
   THUMBNAIL_EMPTY: 'CAPTURE_THUMBNAIL_EMPTY',
   WINDOW_LOAD_FAILED: 'CAPTURE_WINDOW_LOAD_FAILED',
+  SAVE_FAILED: 'CAPTURE_SAVE_FAILED',
   UNKNOWN: 'CAPTURE_UNKNOWN'
 } as const
 
@@ -86,6 +87,7 @@ export type CaptureErrorStage =
   | 'desktop-capture'
   | 'map-source'
   | 'thumbnail'
+  | 'save'
   | 'cleanup'
   | 'unknown'
 

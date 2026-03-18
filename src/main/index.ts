@@ -327,8 +327,8 @@ function createCaptureWindow() {
     return
   }
 
-  const displays = screen.getAllDisplays()
-  if (displays.length <= 0) {
+  const allDisplays = screen.getAllDisplays()
+  if (allDisplays.length <= 0) {
     console.error('[main] no displays found')
     emitCaptureError({
       sessionId: 0,
@@ -338,6 +338,9 @@ function createCaptureWindow() {
     })
     return
   }
+
+  const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const displays = [targetDisplay]
 
   if (process.platform === 'darwin') {
     try {
@@ -512,6 +515,7 @@ function createCaptureWindow() {
   }
 
   captureBackgroundPayload = screensPayload
+  enterSelectingMode()
 
   void (async () => {
     try {
@@ -547,7 +551,7 @@ function createCaptureWindow() {
           throw new Error(`empty sources displayId=${display.id}`)
         }
 
-        const source = pickScreenSourceForDisplay(sources, display, displays)
+        const source = pickScreenSourceForDisplay(sources, display, allDisplays)
         if (!source) {
           emitCaptureError({
             sessionId: session,
@@ -816,45 +820,56 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl: string) => {
-    if (isCaptureActive()) {
-      transitionCaptureState('finishing')
-    }
-    lastCaptureDataUrl = dataUrl
-
-    const image = nativeImage.createFromDataURL(dataUrl)
-    clipboard.writeImage(image)
-
     let filePath: string | null = null
+    try {
+      lastCaptureDataUrl = dataUrl
 
-    if (config.autoSaveToFile) {
-      const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
-      const buffer = Buffer.from(base64, 'base64')
-      const dir = config.saveDir
+      const image = nativeImage.createFromDataURL(dataUrl)
+      clipboard.writeImage(image)
 
-      await fs.promises.mkdir(dir, { recursive: true })
-      const filename = `screenshot-${Date.now()}.png`
-      filePath = path.join(dir, filename)
-      await fs.promises.writeFile(filePath, buffer)
+      if (config.autoSaveToFile) {
+        const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
+        const buffer = Buffer.from(base64, 'base64')
+        const dir = config.saveDir
 
-      const record: ScreenshotRecord = {
-        id: randomUUID(),
-        filePath,
-        createdAt: Date.now()
+        await fs.promises.mkdir(dir, { recursive: true })
+        const filename = `screenshot-${Date.now()}.png`
+        filePath = path.join(dir, filename)
+        await fs.promises.writeFile(filePath, buffer)
+
+        const record: ScreenshotRecord = {
+          id: randomUUID(),
+          filePath,
+          createdAt: Date.now()
+        }
+
+        history.unshift(record)
+        if (history.length > 100) {
+          history = history.slice(0, 100)
+        }
+        saveHistory()
       }
 
-      history.unshift(record)
-      if (history.length > 100) {
-        history = history.slice(0, 100)
+      if (config.openEditorAfterCapture) {
+        createEditorWindow()
+        editorWindow?.webContents.send('editor:image', dataUrl)
       }
-      saveHistory()
-    }
 
-    if (config.openEditorAfterCapture) {
-      createEditorWindow()
-      editorWindow?.webContents.send('editor:image', dataUrl)
-    }
+      if (isCaptureActive()) {
+        transitionCaptureState('finishing')
+      }
 
-    return filePath
+      return filePath
+    } catch (error) {
+      emitCaptureError({
+        sessionId: activeCaptureRunId ?? 0,
+        code: CAPTURE_ERROR_CODES.SAVE_FAILED,
+        stage: 'save',
+        message: 'save image failed',
+        details: { error: String(error) }
+      })
+      throw error
+    }
   })
 
   ipcMain.on(IPC_CHANNELS.CAPTURE_SESSION_REPORT, (_event, report: CaptureSessionReport) => {

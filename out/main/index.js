@@ -32,6 +32,7 @@ const CAPTURE_ERROR_CODES = {
   SOURCE_MAP_FAILED: "CAPTURE_SOURCE_MAP_FAILED",
   THUMBNAIL_EMPTY: "CAPTURE_THUMBNAIL_EMPTY",
   WINDOW_LOAD_FAILED: "CAPTURE_WINDOW_LOAD_FAILED",
+  SAVE_FAILED: "CAPTURE_SAVE_FAILED",
   UNKNOWN: "CAPTURE_UNKNOWN"
 };
 function clampNumber(n, min, max) {
@@ -355,8 +356,8 @@ function createCaptureWindow() {
     });
     return;
   }
-  const displays = screen.getAllDisplays();
-  if (displays.length <= 0) {
+  const allDisplays = screen.getAllDisplays();
+  if (allDisplays.length <= 0) {
     console.error("[main] no displays found");
     emitCaptureError({
       sessionId: 0,
@@ -366,6 +367,8 @@ function createCaptureWindow() {
     });
     return;
   }
+  const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const displays = [targetDisplay];
   if (process.platform === "darwin") {
     try {
       const status = systemPreferences.getMediaAccessStatus("screen");
@@ -520,6 +523,7 @@ function createCaptureWindow() {
     }
   }
   captureBackgroundPayload = screensPayload;
+  enterSelectingMode();
   void (async () => {
     try {
       for (const display of displays) {
@@ -552,7 +556,7 @@ function createCaptureWindow() {
           });
           throw new Error(`empty sources displayId=${display.id}`);
         }
-        const source = pickScreenSourceForDisplay(sources, display, displays);
+        const source = pickScreenSourceForDisplay(sources, display, allDisplays);
         if (!source) {
           emitCaptureError({
             sessionId: session,
@@ -787,37 +791,48 @@ function registerIpcHandlers() {
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_event, dataUrl) => {
-    if (isCaptureActive()) {
-      transitionCaptureState("finishing");
-    }
-    lastCaptureDataUrl = dataUrl;
-    const image = nativeImage.createFromDataURL(dataUrl);
-    clipboard.writeImage(image);
     let filePath = null;
-    if (config.autoSaveToFile) {
-      const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-      const buffer = Buffer.from(base64, "base64");
-      const dir = config.saveDir;
-      await fs.promises.mkdir(dir, { recursive: true });
-      const filename = `screenshot-${Date.now()}.png`;
-      filePath = path.join(dir, filename);
-      await fs.promises.writeFile(filePath, buffer);
-      const record = {
-        id: randomUUID(),
-        filePath,
-        createdAt: Date.now()
-      };
-      history.unshift(record);
-      if (history.length > 100) {
-        history = history.slice(0, 100);
+    try {
+      lastCaptureDataUrl = dataUrl;
+      const image = nativeImage.createFromDataURL(dataUrl);
+      clipboard.writeImage(image);
+      if (config.autoSaveToFile) {
+        const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+        const buffer = Buffer.from(base64, "base64");
+        const dir = config.saveDir;
+        await fs.promises.mkdir(dir, { recursive: true });
+        const filename = `screenshot-${Date.now()}.png`;
+        filePath = path.join(dir, filename);
+        await fs.promises.writeFile(filePath, buffer);
+        const record = {
+          id: randomUUID(),
+          filePath,
+          createdAt: Date.now()
+        };
+        history.unshift(record);
+        if (history.length > 100) {
+          history = history.slice(0, 100);
+        }
+        saveHistory();
       }
-      saveHistory();
+      if (config.openEditorAfterCapture) {
+        createEditorWindow();
+        editorWindow?.webContents.send("editor:image", dataUrl);
+      }
+      if (isCaptureActive()) {
+        transitionCaptureState("finishing");
+      }
+      return filePath;
+    } catch (error) {
+      emitCaptureError({
+        sessionId: activeCaptureRunId ?? 0,
+        code: CAPTURE_ERROR_CODES.SAVE_FAILED,
+        stage: "save",
+        message: "save image failed",
+        details: { error: String(error) }
+      });
+      throw error;
     }
-    if (config.openEditorAfterCapture) {
-      createEditorWindow();
-      editorWindow?.webContents.send("editor:image", dataUrl);
-    }
-    return filePath;
   });
   ipcMain.on(IPC_CHANNELS.CAPTURE_SESSION_REPORT, (_event, report) => {
     if (!report || typeof report !== "object") return;
