@@ -15,6 +15,20 @@ An Electron-based screenshot tool that lives in the system tray. Trigger capture
 - Adjustable mask opacity (`maskAlpha`)
 - “Pin last screenshot” (always-on-top, draggable/resizable image window)
 
+## Install (Download from Releases)
+
+Releases currently provide a Windows installer only.
+
+1. Open the GitHub Releases page and choose the latest version.
+2. Download the `.exe` installer (usually named `Electron Screenshot Setup *.exe`).
+3. Run the installer (you may need to allow Windows SmartScreen).
+4. After installation, the app stays in the system tray:
+   - Press `F1` to start a capture (default hotkey)
+   - Use tray menu → “Settings” to change hotkey / save directory, etc.
+
+Tip:
+- If the global hotkey can’t be registered, try another combo or run as Administrator.
+
 ## Prerequisites
 
 - Node.js (recommended: latest LTS)
@@ -76,6 +90,16 @@ Open the tray menu → “Settings”.
    - The image is copied to clipboard
    - Optional behaviors apply based on Settings (auto-save / open editor)
 
+## Roadmap
+
+- [ ] Friendlier error messages when saving fails (clipboard unavailable, permission issues, etc.)
+- [ ] More obvious saving UI states (disable buttons / small loading)
+- [ ] Reduce production log noise (remove unrelated console.log)
+- [ ] More robust coordinate mapping for Windows mixed-DPI multi-monitor setups (with fallback strategies)
+- [ ] Continued improvements for cross-display selection & virtual desktop edge cases (mixed-DPI alignment)
+- [ ] macOS / Linux installers (Windows-first for now)
+- [ ] Auto-update support (leveraging Release metadata)
+
 ## FAQ
 
 ### Windows: mixed-DPI multi-monitor scaling
@@ -93,4 +117,3 @@ Workarounds:
 - macOS: grant Screen Recording permission, otherwise screen capture can fail.
 - Linux (Wayland): some environments restrict capture APIs; consider X11 or a proper portal configuration.
 - Windows: if the hotkey can’t be registered, try another key combo or run as Administrator.
-
