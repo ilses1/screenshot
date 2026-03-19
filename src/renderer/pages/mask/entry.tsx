@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MaskApp } from './MaskApp'
+import { publishBufferedEvent } from '../../shared/utils/bufferedEvent'
 
 declare global {
   interface Window {
@@ -12,17 +13,14 @@ declare global {
 }
 
 function publishMaskInit(payload: unknown) {
-  const seq = (window.__maskInitSeq ?? 0) + 1
-  window.__maskInitSeq = seq
-  window.__maskInitPayload = payload
-  window.dispatchEvent(new CustomEvent('mask:init', { detail: { seq, payload } }))
+  publishBufferedEvent({ eventName: 'mask:init', seqKey: '__maskInitSeq', payloadKey: '__maskInitPayload' }, payload)
 }
 
 function publishMaskSelection(payload: unknown) {
-  const seq = (window.__maskSelectionSeq ?? 0) + 1
-  window.__maskSelectionSeq = seq
-  window.__maskSelectionPayload = payload
-  window.dispatchEvent(new CustomEvent('mask:selection', { detail: { seq, payload } }))
+  publishBufferedEvent(
+    { eventName: 'mask:selection', seqKey: '__maskSelectionSeq', payloadKey: '__maskSelectionPayload' },
+    payload
+  )
 }
 
 try {

@@ -15,7 +15,14 @@ const IPC_CHANNELS = {
   HISTORY_CLEAR: "history:clear",
   PIN_LAST: "pin:last"
 };
-console.log("预加载脚本已加载，clipboard 是否存在：", !!electron.clipboard);
+const writeImageDataUrlToClipboard = (dataUrl) => {
+  const image = electron.nativeImage.createFromDataURL(dataUrl);
+  if (!electron.clipboard || typeof electron.clipboard.writeImage !== "function") {
+    console.error("剪贴板对象不可用，无法写入图片");
+    return;
+  }
+  electron.clipboard.writeImage(image);
+};
 electron.contextBridge.exposeInMainWorld("api", {
   ping: () => "pong",
   getSettings: () => electron.ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
@@ -60,23 +67,13 @@ electron.contextBridge.exposeInMainWorld("captureApi", {
     electron.ipcRenderer.send(IPC_CHANNELS.CAPTURE_CLOSE, payload);
   },
   saveImageToClipboard: (dataUrl) => {
-    const image = electron.nativeImage.createFromDataURL(dataUrl);
-    if (!electron.clipboard || typeof electron.clipboard.writeImage !== "function") {
-      console.error("剪贴板对象不可用，无法写入图片");
-      return;
-    }
-    electron.clipboard.writeImage(image);
+    writeImageDataUrlToClipboard(dataUrl);
   },
   saveImage: (dataUrl) => electron.ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, dataUrl)
 });
 electron.contextBridge.exposeInMainWorld("editorApi", {
   saveToClipboardAndPersist: (dataUrl) => {
-    const image = electron.nativeImage.createFromDataURL(dataUrl);
-    if (!electron.clipboard || typeof electron.clipboard.writeImage !== "function") {
-      console.error("剪贴板对象不可用，无法写入图片");
-    } else {
-      electron.clipboard.writeImage(image);
-    }
+    writeImageDataUrlToClipboard(dataUrl);
     return electron.ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, dataUrl);
   },
   onImage: (handler) => {

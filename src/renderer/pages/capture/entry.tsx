@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { InputControllerApp } from './InputControllerApp'
+import { publishBufferedEvent } from '../../shared/utils/bufferedEvent'
 
 declare global {
   interface Window {
@@ -10,13 +11,9 @@ declare global {
 }
 
 function publishCaptureBackground(payload: CaptureSetBackgroundPayload) {
-  const seq = (window.__captureBgSeq ?? 0) + 1
-  window.__captureBgSeq = seq
-  window.__captureBgPayload = payload
-  window.dispatchEvent(
-    new CustomEvent('capture:set-background', {
-      detail: { seq, payload }
-    })
+  publishBufferedEvent(
+    { eventName: 'capture:set-background', seqKey: '__captureBgSeq', payloadKey: '__captureBgPayload' },
+    payload
   )
 }
 

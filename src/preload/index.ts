@@ -1,13 +1,13 @@
-import { clipboard, contextBridge, ipcRenderer, nativeImage } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../common/ipcChannels'
 import type { CaptureCloseRequest, CaptureMaskInitPayload, CaptureSelectionUpdate, CaptureSessionReport, CaptureSessionSnapshot, CaptureSetBackgroundPayload } from '../common/capture'
-
-console.log('预加载脚本已加载，clipboard 是否存在：', !!clipboard)
+import type { AppConfig } from '../common/types'
+import { writeImageDataUrlToClipboard } from './clipboard'
 
 contextBridge.exposeInMainWorld('api', {
   ping: () => 'pong',
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
-  updateSettings: (patch: any) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_UPDATE, patch),
+  updateSettings: (patch: Partial<AppConfig>) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_UPDATE, patch),
   getHistory: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_LIST),
   clearHistory: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_CLEAR),
   pinLast: () => ipcRenderer.invoke(IPC_CHANNELS.PIN_LAST)
@@ -49,24 +49,14 @@ contextBridge.exposeInMainWorld('captureApi', {
     ipcRenderer.send(IPC_CHANNELS.CAPTURE_CLOSE, payload)
   },
   saveImageToClipboard: (dataUrl: string) => {
-    const image = nativeImage.createFromDataURL(dataUrl)
-    if (!clipboard || typeof clipboard.writeImage !== 'function') {
-      console.error('剪贴板对象不可用，无法写入图片')
-      return
-    }
-    clipboard.writeImage(image)
+    writeImageDataUrlToClipboard(dataUrl)
   },
   saveImage: (dataUrl: string) => ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, dataUrl)
 })
 
 contextBridge.exposeInMainWorld('editorApi', {
   saveToClipboardAndPersist: (dataUrl: string) => {
-    const image = nativeImage.createFromDataURL(dataUrl)
-    if (!clipboard || typeof clipboard.writeImage !== 'function') {
-      console.error('剪贴板对象不可用，无法写入图片')
-    } else {
-      clipboard.writeImage(image)
-    }
+    writeImageDataUrlToClipboard(dataUrl)
     return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, dataUrl)
   },
   onImage: (handler: (dataUrl: string) => void) => {
